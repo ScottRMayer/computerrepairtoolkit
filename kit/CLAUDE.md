@@ -115,15 +115,47 @@ needs a tool that isn't on this list, that repair is out of scope for this
 session: say so in the transcript and stop, rather than reaching for
 `winget install` or a browser download.
 
-**Built-in Windows:** `sfc`, `DISM`, `chkdsk`, `MpCmdRun.exe` (Defender),
-`winget` (**normal mode only** — absent from the Safe Mode allowlist),
-`cleanmgr`, `netsh`, `powercfg`
+**Exact invocations for every tool below are in `docs\tool-invocations.md`
+on this USB. Read it before running an unfamiliar tool** — it carries the
+flags that stop a tool hanging this session forever on a EULA dialog
+(`-accepteula` on every Sysinternals tool, `/eula` on AdwCleaner,
+`--accept-license --accept-gdpr` on Speedtest) and the ones that stop a tool
+rebooting the machine out from under you (`/noreboot` on AdwCleaner).
+
+**Built-in Windows:** `sfc`, `DISM`, `chkdsk` / `Repair-Volume`, `fsutil`,
+`MpCmdRun.exe` (Defender), `manage-bde` (status only), `mdsched` (prior
+results only), `pnputil`, `icacls`, `netsh`, `ipconfig`, `ping`, `tracert`,
+`nslookup`, `powercfg`, `cleanmgr`, `winget` (**normal mode only** — absent
+from the Safe Mode allowlist)
+
+Two constraints on that list matter more than the tools:
+
+- **BitLocker.** `session-context.json` and the inventory both report
+  encryption state. If any volume shows protection **On**, say so
+  prominently and treat anything touching boot configuration or the system
+  volume as out of scope for this session. Triggering a recovery-key demand
+  on a machine whose key nobody has is permanent data loss, not an
+  inconvenience. `manage-bde -off` and `-forcerecovery` are deny-listed.
+- **Memory testing.** Read *prior* results from the inventory's
+  `memory_diagnostic_results`. Do **not** run `mdsched` — it needs a reboot,
+  which kills this session. If evidence points at RAM (unexplained
+  corruption, crashes that survive software repair), recommend a memory test
+  in your summary and stop chasing it in software. Failing RAM imitates
+  software rot convincingly, and repairing the symptom forever is the
+  failure mode here.
 
 **Sysinternals** (`tools\sysinternals\`): Autoruns/`autorunsc`, Handle,
 PsList, PsKill, PsService, Streams
 
-**Malware/PUP removal:** AdwCleaner (`tools\adwcleaner\`), Emsisoft
-Emergency Kit / `a2cmd.exe` (`tools\emsisoft\`)
+**Malware/PUP removal:** Microsoft Safety Scanner / `msert.exe`
+(`tools\msert\`), AdwCleaner (`tools\adwcleaner\`), Emsisoft Emergency Kit /
+`a2cmd.exe` (`tools\emsisoft\`)
+
+**Prefer quarantine over deletion** with AdwCleaner and `a2cmd`. A false
+positive on a family member's file is unrecoverable if you deleted it and
+recoverable if you quarantined it — note the quarantine path in your summary
+so a human can reverse a mistake. Do not pass AdwCleaner `/preinstalled`:
+it removes OEM software the family may actually use, which is a human's call.
 
 **Cleanup:** BleachBit (`tools\bleachbit\`), WizTree (`tools\wiztree\`)
 

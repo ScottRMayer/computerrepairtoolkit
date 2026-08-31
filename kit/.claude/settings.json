@@ -15,6 +15,9 @@
       "PowerShell(*Disable-ComputerRestore*)",
       "PowerShell(*cipher*/w*)",
 
+      "PowerShell(*manage-bde*-forcerecovery*)",
+      "PowerShell(*manage-bde*-off*)",
+      "PowerShell(*Disable-BitLocker*)",
       "PowerShell(*sdelete*)",
       "PowerShell(*Remove-LocalUser*)",
       "PowerShell(*net user*/delete*)",
@@ -35,6 +38,8 @@
       "Bash(*vssadmin*delete*)",
       "Bash(*wbadmin*delete*)",
       "Bash(*cipher*/w*)",
+      "Bash(*manage-bde*-forcerecovery*)",
+      "Bash(*manage-bde*-off*)",
       "Bash(*sdelete*)",
       "Bash(*net user*/delete*)",
       "Bash(*reg delete HKLM /f*)",

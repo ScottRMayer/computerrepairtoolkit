@@ -34,6 +34,47 @@ function Get-CimSafe {
     }
 }
 
+function Get-BitLockerState {
+    <#
+    Prefers the BitLocker module; falls back to parsing manage-bde, which is
+    present on editions where the PowerShell module isn't. Never throws — a
+    machine with no BitLocker at all is the common case, not an error.
+    #>
+    try {
+        if (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue) {
+            $volumes = Get-BitLockerVolume -ErrorAction Stop |
+                Select-Object MountPoint, VolumeStatus, ProtectionStatus, EncryptionPercentage, EncryptionMethod
+            return @{
+                source  = 'Get-BitLockerVolume'
+                volumes = @($volumes)
+                any_protected = [bool](@($volumes | Where-Object { $_.ProtectionStatus -eq 'On' }).Count)
+            }
+        }
+
+        $raw = & manage-bde -status 2>&1 | Out-String
+        return @{
+            source        = 'manage-bde'
+            raw           = $raw
+            any_protected = ($raw -match 'Protection\s+On')
+        }
+    } catch {
+        Write-KitLog -LogPath $LogPath -Level WARN -Message "Could not determine BitLocker state: $_"
+        return @{ source = 'unavailable'; error = "$_"; any_protected = $null }
+    }
+}
+
+function Get-MemoryDiagnosticResults {
+    try {
+        $events = Get-WinEvent -LogName System -MaxEvents 10 -ErrorAction Stop -FilterXPath `
+            "*[System[Provider[@Name='Microsoft-Windows-MemoryDiagnostics-Results']]]"
+        return @($events | Select-Object TimeCreated, Id, LevelDisplayName, Message)
+    } catch {
+        # No prior run is the normal case and produces a "no events found"
+        # error, so this is informational rather than a warning.
+        return @()
+    }
+}
+
 Write-KitLog -LogPath $LogPath -Message 'Collecting system inventory via Get-CimInstance...'
 
 $inventory = [ordered]@{
@@ -67,6 +108,19 @@ $inventory = [ordered]@{
     startup_commands = Get-CimSafe -ClassName Win32_StartupCommand -Properties @('Name', 'Command', 'Location', 'User')
 
     hotfixes = Get-CimSafe -ClassName Win32_QuickFixEngineering -Properties @('HotFixID', 'InstalledOn')
+
+    # BitLocker state, collected BEFORE any repair action. If a volume is
+    # encrypted with protection on, boot-config or system-volume work can
+    # trigger a recovery-key demand at next boot — which on a family machine
+    # where nobody has the key is permanent data loss, not an inconvenience.
+    bitlocker = Get-BitLockerState
+
+    # Results of any PRIOR Windows Memory Diagnostic run. Free diagnosis:
+    # failing RAM mimics software corruption, and without this signal the
+    # agent can spend a whole session "repairing" software symptoms of a
+    # hardware fault. Running a new test needs a reboot and is out of scope
+    # for an unattended session — see docs/tool-invocations.md.
+    memory_diagnostic_results = Get-MemoryDiagnosticResults
 }
 
 $outputPath = Join-Path $KitRoot "logs\inventory-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"

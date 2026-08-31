@@ -8,6 +8,14 @@
       "destination": "tools\\sysinternals"
     },
     {
+      "name": "microsoft-safety-scanner",
+      "url": "https://go.microsoft.com/fwlink/?LinkId=212732",
+      "sha256": "unpinned",
+      "_unpinned_reason": "MSERT bundles its own malware signatures and expires ~10 days after download, so the binary legitimately differs on every build and a pinned hash would always be stale. Build-Kit logs the actual SHA-256 of the copy it ships.",
+      "destination": "tools\\msert",
+      "_note": "64-bit MSERT. Verify the fwlink still resolves to msert.exe at build time. An expired binary reports as expired rather than clean - see docs/tool-invocations.md."
+    },
+    {
       "name": "adwcleaner",
       "url": "",
       "sha256": "",

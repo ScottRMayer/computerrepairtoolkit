@@ -85,6 +85,19 @@ foreach ($dir in @('state\.claude', 'logs', 'backups', 'iso')) {
     New-Item -ItemType Directory -Path (Join-Path $UsbRoot $dir) -Force | Out-Null
 }
 
+# The agent reads docs\tool-invocations.md at repair time for exact command
+# lines, and CLAUDE.md cross-references the other design docs. They're small
+# markdown files, so ship the whole folder rather than cherry-picking and
+# leaving the agent with dangling references.
+$destDocsDir = Join-Path $UsbRoot 'docs'
+New-Item -ItemType Directory -Path $destDocsDir -Force | Out-Null
+Copy-Item -Path (Join-Path $RepoRoot 'docs\*.md') -Destination $destDocsDir -Force
+Write-BuildLog "Copied design docs to $destDocsDir"
+
+if (-not (Test-Path (Join-Path $destDocsDir 'tool-invocations.md'))) {
+    throw "docs\tool-invocations.md did not reach the drive. CLAUDE.md instructs the agent to read it for exact tool invocations; without it the agent would infer switches on a broken machine."
+}
+
 # --- 3. Auth ----------------------------------------------------------------
 $authEnvPath = Join-Path $destConfigDir 'auth.env'
 if (-not (Test-Path $authEnvPath)) {
@@ -111,6 +124,16 @@ if ($SkipToolFetch) {
             continue
         }
 
+        # "unpinned" is a deliberate, documented exception for tools whose
+        # binary legitimately changes every build — MSERT bundles its own
+        # signatures and expires ~10 days after download, so a pinned hash
+        # would be wrong by design. Requires a stated reason so this can't
+        # become a casual way around checksum verification.
+        $unpinned = ($tool.sha256 -eq 'unpinned')
+        if ($unpinned -and -not $tool._unpinned_reason) {
+            throw "Tool '$($tool.name)' is marked unpinned but has no _unpinned_reason. Refusing to fetch an unverified binary without a documented justification."
+        }
+
         $destDir = Join-Path $UsbRoot $tool.destination
         New-Item -ItemType Directory -Path $destDir -Force | Out-Null
         $downloadPath = Join-Path $env:TEMP "$($tool.name)-download"
@@ -119,11 +142,15 @@ if ($SkipToolFetch) {
         Invoke-WebRequest -Uri $tool.url -OutFile $downloadPath -UseBasicParsing
 
         $actualHash = (Get-FileHash -Path $downloadPath -Algorithm SHA256).Hash
-        if ($actualHash -ne $tool.sha256) {
+        if ($unpinned) {
+            Write-BuildLog "UNPINNED: $($tool.name) fetched without checksum verification. Reason: $($tool._unpinned_reason)" 'WARN'
+            Write-BuildLog "  SHA256 of the copy shipped on this drive: $actualHash"
+        } elseif ($actualHash -ne $tool.sha256) {
             Remove-Item $downloadPath -Force
             throw "Checksum mismatch for $($tool.name): expected $($tool.sha256), got $actualHash. Refusing to place an unverified binary on the kit."
+        } else {
+            Write-BuildLog "Checksum verified for $($tool.name)."
         }
-        Write-BuildLog "Checksum verified for $($tool.name)."
 
         if ($downloadPath -like '*.zip') {
             Expand-Archive -Path $downloadPath -DestinationPath $destDir -Force

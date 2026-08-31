@@ -27,6 +27,10 @@ E:\                              (drive letter varies)
 │   ├── smartmontools\            smartctl.exe extracted from the NSIS installer
 │   ├── speedtest\
 │   └── nirsoft\
+├── docs\                         design docs, copied from the repo at build time
+│   ├── tool-invocations.md       exact command lines — CLAUDE.md sends the agent here
+│   ├── safe-mode-constraints.md
+│   └── …                         (the rest of docs/*.md, for agent context)
 ├── config\
 │   ├── auth.env.example          template — copy to auth.env, fill in, never commit auth.env
 │   └── auth.env                  gitignored — real CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY lives here
@@ -63,7 +67,9 @@ This:
    to `$UsbRoot\bin\claude\` — see
    [`docs/authentication.md`](authentication.md#portability-no-nodejs-bundling-needed).
 2. Copies `kit/` (this repo's playbook, scripts, settings template) onto the
-   drive.
+   drive, plus `docs/*.md` into `docs\` — the agent reads
+   `docs\tool-invocations.md` at repair time, and the build fails loudly if
+   that file doesn't land.
 3. Fetches and checksum-verifies each whitelisted tool per
    [`docs/tool-whitelist.md`](tool-whitelist.md) into `tools\`.
 4. Prompts you to run `claude setup-token` if `config\auth.env` doesn't

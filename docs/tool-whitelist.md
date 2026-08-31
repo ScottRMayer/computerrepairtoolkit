@@ -1,8 +1,16 @@
 # Tool whitelist
 
-22 tools + 2 pipeline steps. This is the authoritative list — `CLAUDE.md`
+31 tools + 2 pipeline steps. This is the authoritative list — `CLAUDE.md`
 restates it for the agent, but this file is what to edit first; keep both in
 sync.
+
+**Exact invocations live in [`docs/tool-invocations.md`](tool-invocations.md)** —
+including the flags that stop a tool hanging an unattended session on a EULA
+dialog. This file says *what* is allowed; that one says *how* to run it.
+
+(The count treats the NirSoft suite as one entry. Earlier revisions of this
+doc said "23", inherited from the original survey, whose per-category
+arithmetic didn't reconcile — don't treat the total as load-bearing.)
 
 ## Pipeline steps (every session, in order)
 
@@ -25,9 +33,32 @@ sync.
 
 ## Built-in Windows
 
-`sfc`, `DISM`, `chkdsk`, `MpCmdRun.exe` (Defender), `winget` *(normal mode
-only — see [`docs/safe-mode-constraints.md`](safe-mode-constraints.md))*,
-`cleanmgr`, `netsh`, `powercfg`
+No download, no checksum, no Defender exclusion, and available in Safe Mode
+unless noted — the cheapest capability in the kit.
+
+**Repair:** `sfc`, `DISM`, `chkdsk` / `Repair-Volume`, `fsutil`
+**Security:** `MpCmdRun.exe` (Defender)
+**Encryption:** `manage-bde` *(status checks — `-off` and `-forcerecovery` are deny-listed)*
+**Hardware:** `mdsched` *(prior results only — see below)*
+**Drivers:** `pnputil`
+**Permissions:** `icacls`
+**Network:** `netsh`, `ipconfig`, `ping`, `tracert`, `nslookup`
+**Power:** `powercfg`
+**Cleanup:** `cleanmgr`
+**Packages:** `winget` *(normal mode only — see [`docs/safe-mode-constraints.md`](safe-mode-constraints.md))*
+
+Two of these carry constraints that matter more than the tools themselves:
+
+- **`manage-bde -status` should run during inventory, before any repair
+  action.** If a volume is BitLocker-encrypted, work touching boot config or
+  the system volume can trigger a recovery-key demand at next boot. On a
+  family machine where nobody knows where the key is, that turns a repair
+  into permanent data loss. `02-Get-SystemInventory.ps1` collects this.
+- **`mdsched` requires a reboot, which kills the agent session.** The agent
+  may read *prior* memory-diagnostic results from the event log (free, zero
+  risk) and recommend a test, but must not trigger one. Failing RAM mimics
+  software corruption closely enough that without this the agent will
+  "repair" software symptoms of a hardware fault indefinitely.
 
 ## Sysinternals
 
@@ -37,7 +68,19 @@ Autoruns/`autorunsc`, Handle, PsList, PsKill, PsService, Streams
 
 ## Malware/PUP removal
 
-AdwCleaner, Emsisoft Emergency Kit (`a2cmd.exe`)
+**Microsoft Safety Scanner** (`msert.exe`) — free, portable single binary
+from Microsoft. An independent engine from the Defender already on the
+machine, so it's a genuine second opinion. Signatures are bundled into the
+binary, which **expires ~10 days after download** — fetch it fresh at build
+time, and treat an expired-binary result as no result rather than as clean.
+
+AdwCleaner (a Malwarebytes product — the free half of their offering; the
+portable Malwarebytes scanner ships only in their licensed Toolset),
+Emsisoft Emergency Kit (`a2cmd.exe`).
+
+**Prefer quarantine over deletion** with both AdwCleaner and `a2cmd` — a
+false positive on a family member's file is unrecoverable otherwise. Same
+reasoning that removed SDelete.
 
 ## Cleanup
 
@@ -84,6 +127,12 @@ rule accidentally blocking a legitimate repair action.
 | FRST | Fixlist-driven — whatever drives it generates arbitrary registry/file/service edits with no schema constraining it. Manual, human-reviewed use only. |
 | `setup.exe /Auto Upgrade` (in-place repair install) | See [`docs/iso-role.md`](iso-role.md) — deliberately left out pending explicit approval, not because it's unsafe in principle. |
 | Clean reinstall | Same — an escalation tier, not part of the autonomous whitelist. |
+| **Kaspersky KVRT** | Best CLI of anything surveyed (`-silent`, `-accepteula`, `-processlevel`), but the US Commerce Department prohibited Kaspersky from providing antivirus software and services to US persons — sales barred 2024-07-20, all service **including signature updates** barred 2024-09-29, still in force. A scanner that can't update signatures also degrades every month. ([BIS](https://www.bis.gov/kaspersky)) |
+| **HWiNFO** | Command-line reporting is a **Pro (paid) feature**; the free build can't do it. ([licenses](https://www.hwinfo.com/licenses/)) |
+| **CrystalDiskInfo** | Portable but no native CLI — only a third-party PowerShell wrapper. `smartctl` already covers SMART properly. |
+| **Malwarebytes Toolset** | The official portable Malwarebytes scanner (`MBTS.exe /scan:malware`), but it's a licensed technician product, not free. AdwCleaner is the free Malwarebytes tool and is already included. |
+| **HitmanPro** | Scanning is free; *removal* requires a license. |
+| **Sophos Scan & Clean** | Good candidate — free, no-install, runs from USB. Not added because its CLI switches could not be verified (its KB page returned no content on 2026-08-31). Adding a tool to an unattended kit without a known invocation is the failure mode [`docs/tool-invocations.md`](tool-invocations.md) exists to prevent. Verify and add. |
 
 ## Why SDelete was removed
 
