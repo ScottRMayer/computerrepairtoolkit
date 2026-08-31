@@ -86,7 +86,45 @@ before the `claude` calls, since the network flyout UI won't show a working
 connection even when one exists (see
 [`docs/safe-mode-constraints.md`](safe-mode-constraints.md)).
 
-## 7. End-to-end `Start-Repair.ps1`
+## 7. Backup flow (test each of the three paths)
+
+These run on the launcher side and don't need Claude Code working yet, so
+they can be tested independently of steps 1-6.
+
+```powershell
+# Measure only - should print a byte count and copy nothing
+.\scripts\00-Backup-UserData.ps1 -MeasureOnly
+
+# The picker - should list your drives with free space, flag the too-small
+# ones, the kit's own drive, and C:. Try selecting a too-small drive (should
+# warn and require confirmation) and try [S] skip (should require typing SKIP).
+.\scripts\Select-BackupTarget.ps1 -RequiredBytes 500GB -ExcludePath $PWD
+
+# Capacity pre-flight - point at a drive too small on purpose. It must fail
+# BEFORE copying anything, not partway through.
+.\scripts\00-Backup-UserData.ps1 -DestinationRoot <small drive> 
+```
+
+Confirm the backup lands at `<destination>\<username>-<timestamp>\` with the
+shell folders under it, and that only the current user's profile is copied
+unless you pass `-AllProfiles`.
+
+Then check `state\session-context.json` after a launch — `backup.completed`,
+`backup.destination`, and `backup.scope` must match what actually happened,
+since the agent's behavior keys off them.
+
+## 8. Defender exclusions are removed again
+
+```powershell
+Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
+```
+
+Run this before, during, and after a session. The kit's `tools`/`bin`/
+`scripts` paths should appear during and be gone after. If they survive,
+that's a persistent hole left in the machine — see
+[`docs/decisions.md`](decisions.md).
+
+## 9. End-to-end `Start-Repair.ps1`
 
 Only after 1–6 pass. Point it at a disposable VM snapshot first, not a
 family member's actual machine — confirm the full pipeline (backup →

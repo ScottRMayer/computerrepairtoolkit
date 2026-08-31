@@ -6,14 +6,22 @@ sync.
 
 ## Pipeline steps (every session, in order)
 
-1. **User-data backup** — [`kit/scripts/00-Backup-UserData.ps1`](../kit/scripts/00-Backup-UserData.ps1)
-2. **Restore point** (normal mode only, frequency override set first) —
+**Launcher-run, before the agent starts** (needs a person — see
+[`docs/decisions.md`](decisions.md)):
+
+0. **User-data backup**, optional, operator-selected destination —
+   [`kit/scripts/Select-BackupTarget.ps1`](../kit/scripts/Select-BackupTarget.ps1)
+   then [`kit/scripts/00-Backup-UserData.ps1`](../kit/scripts/00-Backup-UserData.ps1)
+
+**Agent-run, per `CLAUDE.md`, before any diagnostic or repair action:**
+
+1. **Read `state\session-context.json`** — what the launcher did, including
+   whether a backup exists
+2. **Restore point** (normal mode only, frequency override set first; Safe
+   Mode uses `-SafeModeFallback`) —
    [`kit/scripts/01-New-RestorePoint.ps1`](../kit/scripts/01-New-RestorePoint.ps1)
 3. **`Get-CimInstance` system inventory** —
    [`kit/scripts/02-Get-SystemInventory.ps1`](../kit/scripts/02-Get-SystemInventory.ps1)
-
-`CLAUDE.md` instructs the agent to treat these as non-negotiable prerequisites,
-run in this order, before any diagnostic or repair action.
 
 ## Built-in Windows
 

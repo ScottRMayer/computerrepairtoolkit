@@ -22,17 +22,24 @@ nowhere else.
 ## How it works
 
 1. Plug the USB into the target Windows machine.
-2. Run `Start-Repair.ps1` from the drive.
-3. The launcher detects normal vs. Safe Mode, sets up logging and Defender
-   exclusions on the USB tool directory, and launches:
+2. Run `Start-Repair.ps1` from the drive (elevated, ideally — DISM, chkdsk,
+   and restore points all need it).
+3. **You pick a backup destination**, from a list of available drives with
+   their free space, or skip the backup entirely. This is the one step that
+   needs a person, so it happens up front while you're still standing there.
+   `-BackupDestination D:\Backups` or `-BackupMode Skip` bypass the prompt.
+4. The launcher detects normal vs. Safe Mode, sets up logging and Defender
+   exclusions, records what it did to `state\session-context.json`, and
+   launches:
    ```
    claude -p "<repair playbook prompt>" --dangerously-skip-permissions
    ```
-4. Claude Code reads `CLAUDE.md` from the USB (the bundled instructions file
-   — see below), backs up user data, creates a restore point, runs system
-   inventory, and works through diagnosis and repair using only the
-   whitelisted tools.
-5. The full run is transcript-logged to the USB, not the target machine.
+5. Claude Code reads `CLAUDE.md` from the USB (the bundled instructions file
+   — see below) plus the session context, creates a restore point, runs
+   system inventory, and works through diagnosis and repair unattended using
+   only the whitelisted tools.
+6. The full run is transcript-logged to the USB, not the target machine, and
+   the Defender exclusions are removed again on the way out.
 
 **Claude Code's `--dangerously-skip-permissions` bypass is a real bypass —
 a small set of hard-coded refusals survive it, but everything else runs

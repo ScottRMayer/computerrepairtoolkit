@@ -51,19 +51,37 @@ USB drive
 └── logs/                     per-run transcript, separate from state/.claude session history
 ```
 
+### Where the human/agent line is drawn
+
+At "does this step need a person?" Backup destination selection does — the
+only moment an operator is reliably present is at plug-in time — so the
+backup runs in the launcher, before handoff. Everything after that is the
+agent's. The launcher records what it did in `state/session-context.json`,
+and `CLAUDE.md` makes reading that file the agent's first instruction, so
+the agent knows whether a safety net exists rather than assuming one.
+
 `Start-Repair.ps1`:
 
 1. Detects Safe Mode vs. normal mode
    (`HKLM\SYSTEM\CurrentControlSet\Control\SafeBoot\Option`, absent in
-   normal mode).
-2. Sets `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY`,
+   normal mode), and whether the session is elevated (half the whitelist —
+   DISM, chkdsk, restore points, Defender exclusions — needs it, so this is
+   surfaced loudly rather than discovered as confusing failures later).
+2. Runs the optional user-data backup: measures the source, offers a volume
+   picker (`Select-BackupTarget.ps1`) that flags volumes too small, the
+   kit's own drive, and the system drive, then copies with a capacity
+   pre-flight. `-BackupMode Skip` or `-BackupDestination <path>` bypass the
+   prompt.
+3. Sets `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY`,
    `DISABLE_AUTOUPDATER=1`.
-3. Runs `03-Set-DefenderExclusions.ps1` for the USB tool directory (best
-   effort — Defender itself may not be reachable to modify from Safe Mode
-   in every configuration; the script logs and continues rather than
-   blocking on failure).
-4. Starts a PowerShell transcript to `logs/`.
-5. Invokes:
+4. Writes `state/session-context.json` — boot mode, elevation, backup
+   status/destination/scope.
+5. Runs `03-Set-DefenderExclusions.ps1` for the USB tool directory (best
+   effort — Defender may not be reachable to modify from Safe Mode in every
+   configuration; the script logs and continues rather than blocking), and
+   removes those exclusions again in a `finally` block so the machine isn't
+   left permanently weakened.
+6. Invokes:
    ```powershell
    & "$KitRoot\bin\claude\claude.exe" -p $PlaybookPrompt `
        --dangerously-skip-permissions `
@@ -74,9 +92,27 @@ USB drive
    mid-run still leaves a usable partial transcript on the USB (see
    headless-mode docs: exit code is non-zero on failure, and the failure
    reason prints as the result on stdout even for auth failures).
-6. `CLAUDE.md` itself directs the agent through the pipeline steps (backup →
-   restore point → inventory) before anything else, and confines it to the
-   tool whitelist — see [`docs/tool-whitelist.md`](tool-whitelist.md).
+7. `CLAUDE.md` then directs the agent: read `session-context.json` → restore
+   point → inventory, before anything else, and confines it to the tool
+   whitelist — see [`docs/tool-whitelist.md`](tool-whitelist.md).
+
+## The whitelist is prose, and what that does and doesn't mean
+
+`CLAUDE.md` also carries an explicit untrusted-input section, because a
+repair agent reads attacker-controlled text by definition — see
+[`docs/decisions.md`](decisions.md). Both that and the tool whitelist are
+model instructions, so they're mitigations rather than guarantees.
+
+Two enforced mechanisms exist and are currently unused, recorded here so the
+choice stays visible: `permissions.deny` rules block in every mode including
+`bypassPermissions` ("Deny rules block in every mode" — permission-modes
+docs), and a `PreToolUse` hook exiting with code 2 stops a call before
+permission rules are evaluated. Neither prompts anyone, so neither would
+reduce the kit's autonomy. Worth noting that the built-in hard-coded
+refusals that survive bypass mode (`rm -rf /`, `rm -rf ~`) and the
+critical-path circuit breaker (scoped to `rm`/`rmdir`) are Unix-shaped — on
+native Windows the agent drives PowerShell, so `Remove-Item -Recurse -Force`,
+`Format-Volume`, `Clear-Disk`, and `diskpart` plausibly hit none of them.
 
 No `--bare`: the kit depends on `CLAUDE.md` auto-loading, and bare mode
 skips it (see [`docs/authentication.md`](authentication.md) for the other

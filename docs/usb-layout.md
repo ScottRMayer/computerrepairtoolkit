@@ -11,10 +11,11 @@ E:\                              (drive letter varies)
 ├── bin\
 │   └── claude\                   native claude.exe + bundled ripgrep, copied whole from the build machine's install
 ├── scripts\
-│   ├── 00-Backup-UserData.ps1
+│   ├── 00-Backup-UserData.ps1    run by the launcher, not the agent
 │   ├── 01-New-RestorePoint.ps1
 │   ├── 02-Get-SystemInventory.ps1
-│   ├── 03-Set-DefenderExclusions.ps1
+│   ├── 03-Set-DefenderExclusions.ps1   (-Remove undoes them at session end)
+│   ├── Select-BackupTarget.ps1   interactive volume picker for the backup destination
 │   ├── Test-SafeMode.ps1
 │   └── lib\Common.ps1
 ├── tools\                        the 23 whitelisted tool binaries — see docs/tool-whitelist.md
@@ -30,11 +31,14 @@ E:\                              (drive letter varies)
 │   ├── auth.env.example          template — copy to auth.env, fill in, never commit auth.env
 │   └── auth.env                  gitignored — real CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY lives here
 ├── state\
-│   └── .claude\                  CLAUDE_CONFIG_DIR target — credentials, session history
+│   ├── .claude\                  CLAUDE_CONFIG_DIR target — credentials, session history
+│   └── session-context.json      what the launcher did, read by the agent first
 ├── iso\
 │   └── <edition>-install.wim     for DISM /Source: — see docs/iso-role.md
 ├── logs\                         per-run transcripts (PowerShell transcript + claude stream-json)
-└── backups\                      user-data backup destination, per docs/decisions.md
+└── backups\                      only used if the operator picks the kit's own drive
+                                  as the backup destination — usually they should
+                                  pick an external drive instead, see docs/decisions.md
 ```
 
 `kit/` in this repo mirrors everything above except `bin/claude/`, `tools/`,

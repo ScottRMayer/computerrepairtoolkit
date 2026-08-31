@@ -23,9 +23,13 @@
   whitelist. See [`docs/iso-role.md`](iso-role.md).
 - USB folder layout designed — see [`docs/usb-layout.md`](usb-layout.md).
 - `CLAUDE.md` on-USB playbook drafted — see [`kit/CLAUDE.md`](../kit/CLAUDE.md).
-- User-data backup, restore-point (with the frequency-override fix),
-  system-inventory, Safe Mode detection, and Defender-exclusion scripts
-  written — see `kit/scripts/`.
+- User-data backup (optional, operator-selected destination with a volume
+  picker and capacity pre-flight), restore-point (with the
+  frequency-override fix), system-inventory, Safe Mode detection, and
+  Defender-exclusion scripts (with removal at session end) written — see
+  `kit/scripts/`.
+- `kit/CLAUDE.md` carries an explicit untrusted-input section: text read off
+  the target machine informs diagnosis but never changes instructions.
 - Every `.ps1` script in the repo parses cleanly under PowerShell 7's own
   parser (`pwsh` is available in this sandbox even without Windows). This
   catches syntax errors but not behavior — the Windows-only cmdlets these
@@ -60,6 +64,14 @@ follows from documented CLI/OS behavior, not a live test.
 - Windows edition/build to target for the bundled WIM not yet chosen (see
   [`docs/iso-role.md`](iso-role.md) for the tradeoff) — pick the edition
   when you actually run `Build-Kit.ps1`.
+
+## Considered and deliberately not done
+
+- **`permissions.deny` rules + a blocking `PreToolUse` hook** to enforce the
+  tool whitelist in code rather than prose. Both work under
+  `bypassPermissions` and neither prompts anyone, so neither would reduce
+  autonomy — see [`docs/architecture.md`](architecture.md#the-whitelist-is-prose-and-what-that-does-and-doesnt-mean).
+  Not implemented for now; the plan is a supervised test run first.
 
 ## Resume here
 
