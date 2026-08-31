@@ -1,6 +1,6 @@
 # Tool whitelist
 
-23 tools + 2 pipeline steps. This is the authoritative list — `CLAUDE.md`
+22 tools + 2 pipeline steps. This is the authoritative list — `CLAUDE.md`
 restates it for the agent, but this file is what to edit first; keep both in
 sync.
 
@@ -31,7 +31,9 @@ only — see [`docs/safe-mode-constraints.md`](safe-mode-constraints.md))*,
 
 ## Sysinternals
 
-Autoruns/`autorunsc`, Handle, PsList, PsKill, PsService, SDelete, Streams
+Autoruns/`autorunsc`, Handle, PsList, PsKill, PsService, Streams
+
+(SDelete is part of the Sysinternals suite but is **excluded** — see below.)
 
 ## Malware/PUP removal
 
@@ -77,10 +79,48 @@ rule accidentally blocking a legitimate repair action.
 | Tool | Why |
 |---|---|
 | `verifier.exe` | Forces a BSOD by design when it finds a driver fault — wrong for unattended use. |
+| SDelete | Its only function is making data irrecoverable, which is not a repair capability. Removed from the whitelist after review — see below. |
 | CCleaner | CLI only does disk cleanup (registry cleaner is GUI-only); `cleanmgr` + BleachBit cover it; supply-chain-compromise history (2017). |
 | FRST | Fixlist-driven — whatever drives it generates arbitrary registry/file/service edits with no schema constraining it. Manual, human-reviewed use only. |
 | `setup.exe /Auto Upgrade` (in-place repair install) | See [`docs/iso-role.md`](iso-role.md) — deliberately left out pending explicit approval, not because it's unsafe in principle. |
 | Clean reinstall | Same — an escalation tier, not part of the autonomous whitelist. |
+
+## Why SDelete was removed
+
+It was originally whitelisted as part of "the Sysinternals suite" rather
+than justified individually. On review it fails the same test already
+applied to `verifier.exe`: destructive by design, wrong for unattended use.
+
+Every repair task it appears useful for is better served by a tool already
+on the list:
+
+| Apparent use | Actually the right tool |
+|---|---|
+| Deleting stubborn/locked files | **Handle** — find the lock, close it, then delete normally. SDelete does not help with locked files; it's a secure-erase tool, not a force-delete tool. |
+| Removing malware files | **AdwCleaner** / **Emsisoft `a2cmd`** — these *quarantine*, which is strictly better, because a false positive stays recoverable. |
+| Freeing disk space | **`cleanmgr`** / **BleachBit** |
+
+And it is the one whitelisted tool that defeats the kit's own safety model.
+Everything else in this design assumes rollback exists — restore point,
+user-data backup, quarantine. SDelete is specifically engineered to make
+rollback impossible, and secure-erase framing ("securely clean up these
+leftover files") is exactly the shape a prompt injection would take.
+
+Nothing replaces it, because secure deletion isn't a repair function. If a
+drive genuinely needs wiping before disposal, that's a separate deliberate
+task with a human present, not something an unattended repair agent carries.
+
+Two honest caveats:
+
+- **BleachBit, still whitelisted, has its own shred/overwrite capability.**
+  Removing SDelete narrows the irreversible-destruction surface; it doesn't
+  eliminate it. BleachBit's *default* operation is ordinary cleanup, where
+  SDelete's only operation is destruction — different risk profiles, but not
+  zero.
+- **The binary still physically ships**, because Sysinternals is fetched as
+  a single suite archive. `Build-Kit.ps1` deletes `sdelete*.exe` after
+  extracting, and a deny rule blocks it regardless, so removal doesn't
+  depend on the delete step having worked.
 
 ## Portable builds confirmed available
 

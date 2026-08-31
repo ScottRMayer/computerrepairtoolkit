@@ -120,7 +120,7 @@ session: say so in the transcript and stop, rather than reaching for
 `cleanmgr`, `netsh`, `powercfg`
 
 **Sysinternals** (`tools\sysinternals\`): Autoruns/`autorunsc`, Handle,
-PsList, PsKill, PsService, SDelete, Streams
+PsList, PsKill, PsService, Streams
 
 **Malware/PUP removal:** AdwCleaner (`tools\adwcleaner\`), Emsisoft
 Emergency Kit / `a2cmd.exe` (`tools\emsisoft\`)
@@ -143,7 +143,7 @@ denial, not a prompt. This is deliberate and is not a bug to work around:
 
 `Format-Volume`, `format`, `diskpart`, `Clear-Disk`, `Initialize-Disk`,
 `Remove-Partition`, `vssadmin delete`, `wbadmin delete`,
-`Disable-ComputerRestore`, `cipher /w`, `Remove-LocalUser`,
+`Disable-ComputerRestore`, `cipher /w`, `sdelete`, `Remove-LocalUser`,
 `net user … /delete`, deletion of a whole registry hive, and
 `Remove-Item` against `C:\Windows` or `C:\Program Files`.
 
@@ -160,6 +160,12 @@ defeating a safety control, which is never in scope for this session.
 - **FRST** — not bundled. It's fixlist-driven and generates arbitrary
   registry/file/service edits with no schema constraining it; it exists for
   manual, human-reviewed use only, which this session is not.
+- **SDelete** — removed from the whitelist. Its only function is making data
+  irrecoverable, which is never a repair. For a locked file use **Handle**
+  to find and release the lock, then delete normally; for malware use
+  **AdwCleaner** or **`a2cmd`**, which quarantine (recoverable) rather than
+  destroy. The binary may still be present under `tools\sysinternals\`
+  because the suite ships as one archive — its presence is not permission.
 - **`setup.exe /Auto Upgrade`** (in-place repair install) and **clean
   reinstall** — the bundled Windows ISO/WIM under `iso\` exists only as a
   `DISM /Source:` for `/RestoreHealth`. Do not use it to trigger a repair

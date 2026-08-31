@@ -18,7 +18,7 @@ E:\                              (drive letter varies)
 │   ├── Select-BackupTarget.ps1   interactive volume picker for the backup destination
 │   ├── Test-SafeMode.ps1
 │   └── lib\Common.ps1
-├── tools\                        the 23 whitelisted tool binaries — see docs/tool-whitelist.md
+├── tools\                        the 22 whitelisted tool binaries — see docs/tool-whitelist.md
 │   ├── sysinternals\
 │   ├── adwcleaner\
 │   ├── emsisoft\

@@ -2,7 +2,7 @@
 
 ## Done and verified (against Anthropic's published docs, 2026-08-31)
 
-- All 23 whitelisted tool CLI switches confirmed against vendor-primary
+- All 22 whitelisted tool CLI switches confirmed against vendor-primary
   documentation — see [`docs/tool-whitelist.md`](tool-whitelist.md).
 - Safe Mode service constraints enumerated directly from the registry
   allowlist on Windows 11 25H2 build 26200.9278, cross-checked against

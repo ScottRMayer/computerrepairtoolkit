@@ -121,11 +121,13 @@ These are settled. Don't re-pitch them.
 
   Borderline cases deliberately left **out** because they do have plausible
   repair uses: `bcdedit` (toggling `safeboot` is how you get a machine into
-  and out of Safe Mode), `Set-Partition`, `Clear-RecycleBin` (both `cleanmgr`
-  and BleachBit already empty it, so denying it would be theater), and
-  `sdelete` — which is a secure-delete tool that is *on* the whitelist, and
-  is as destructive as anything denied above if pointed at the wrong path.
-  That tension is real and is noted rather than resolved.
+  and out of Safe Mode), `Set-Partition`, and `Clear-RecycleBin` (both
+  `cleanmgr` and BleachBit already empty it, so denying it would be theater).
+
+  `sdelete` was the sharp edge here — a secure-delete tool that was *on* the
+  whitelist and as destructive as anything denied above. That tension is now
+  resolved by removing it from the whitelist entirely rather than living
+  with it; see [`docs/tool-whitelist.md`](tool-whitelist.md#why-sdelete-was-removed).
 
   What the list does and doesn't buy: the named catastrophic verbs are
   caught robustly, because PowerShell aliases are canonicalized before

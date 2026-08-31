@@ -132,6 +132,18 @@ if ($SkipToolFetch) {
         }
         Remove-Item $downloadPath -Force
     }
+
+    # Sysinternals ships as one suite archive, so tools excluded from the
+    # whitelist arrive whether we want them or not. Delete them rather than
+    # relying on the deny rule alone — see docs/tool-whitelist.md.
+    $excludedBinaries = @('sdelete.exe', 'sdelete64.exe', 'sdelete64a.exe')
+    foreach ($binary in $excludedBinaries) {
+        Get-ChildItem -Path (Join-Path $UsbRoot 'tools') -Filter $binary -Recurse -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                Write-BuildLog "Removing non-whitelisted binary from kit: $($_.FullName)"
+                Remove-Item $_.FullName -Force
+            }
+    }
 }
 
 # --- 5. ISO / WIM extraction -------------------------------------------------

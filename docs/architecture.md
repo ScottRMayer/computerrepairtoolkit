@@ -18,9 +18,10 @@ That instructions file is doing the safety work; it's written accordingly
 config-file equivalent of the CLI flag, but there are reported cases where
 it doesn't suppress prompts on some CLI versions while the flag reliably
 does — so the launcher passes `--dangerously-skip-permissions` explicitly
-rather than relying on the settings file alone. `kit/config/settings.json`
+rather than relying on the settings file alone. `kit/.claude/settings.json`
 still sets `bypassPermissions` as a belt-and-suspenders default, and layers
-`DISABLE_AUTOUPDATER` / `autoUpdatesChannel` pinning underneath it.
+the enforced deny rules, `DISABLE_AUTOUPDATER`, and `autoUpdatesChannel`
+pinning underneath it.
 
 ## Vendor guidance conflict — noted and accepted
 
@@ -44,7 +45,7 @@ USB drive
 ├── .claude/settings.json     bypassPermissions default, disabled auto-update
 ├── bin/claude/                the native binary + its bundled ripgrep, copied whole
 ├── scripts/                  numbered pipeline steps (PowerShell, run before the agent starts)
-├── tools/                    the 23 whitelisted tool binaries, vendor-fresh + checksummed
+├── tools/                    the 22 whitelisted tool binaries, vendor-fresh + checksummed
 ├── config/auth.env           CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY (gitignored, not in repo)
 ├── state/.claude/            CLAUDE_CONFIG_DIR target — credentials, session history, transcripts
 ├── iso/                      matching-version Windows WIM for DISM /Source:, boot media
