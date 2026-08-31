@@ -190,6 +190,27 @@ try {
     # a removable drive letter — see 03-Set-DefenderExclusions.ps1.
     Write-KitLog -LogPath $LogPath -Message 'Removing Defender exclusions added for this session...'
     & (Join-Path $KitRoot 'scripts\03-Set-DefenderExclusions.ps1') -Remove
+
+    # Evacuate the audit trail off the USB. The transcript is the only record
+    # of what an unattended agent did, and until now it lived only on the
+    # same writable USB a compromised host — or the agent itself, steered by
+    # injection — could delete or edit. Copying it to the operator-chosen
+    # backup drive gives a second copy on separate media. This is a copy, not
+    # a guarantee: neither location is tamper-evident (see docs/red-team-review.md).
+    if ($backupResult.destination -and (Test-Path $backupResult.destination)) {
+        try {
+            $auditDir = Join-Path $backupResult.destination "RepairKit-Audit-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            New-Item -ItemType Directory -Path $auditDir -Force | Out-Null
+            Copy-Item -Path $runLogPath -Destination $auditDir -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path $contextPath -Destination $auditDir -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path (Join-Path $KitRoot 'logs\*') -Destination $auditDir -Force -ErrorAction SilentlyContinue
+            Write-KitLog -LogPath $LogPath -Message "Audit trail copied off-USB to $auditDir"
+        } catch {
+            Write-KitLog -LogPath $LogPath -Level WARN -Message "Could not copy audit trail off-USB: $_. The on-USB transcript at $runLogPath is still the primary record."
+        }
+    } else {
+        Write-KitLog -LogPath $LogPath -Level WARN -Message 'No off-USB backup drive was chosen, so the run transcript exists only on the USB. Copy logs\ to separate media before reusing this drive.'
+    }
 }
 
 if ($exitCode -eq 0) {

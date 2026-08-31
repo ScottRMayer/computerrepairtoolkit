@@ -92,8 +92,25 @@ it to a USB-local path (`kit/state/.claude`) before launch, so:
 
 ## Threat model for the stored credential
 
-The USB carries a working credential at rest. Mitigations, in order of
-how load-bearing they are:
+Two distinct exposures, not one:
+
+1. **A lost or stolen drive** — the credential at rest on the USB.
+2. **Theft during a run by malware already on the target** — the more likely
+   case for *this* tool, since you run it precisely on machines that may be
+   compromised. `config\auth.env` is plaintext on the mounted drive, and
+   `Start-Repair.ps1` loads the token into the process environment; resident
+   malware with sufficient privilege can read either. This is largely
+   structural — an unattended offline agent needs a usable credential
+   present, and any form present on the host is reachable by
+   privileged-enough malware. See [`docs/red-team-review.md`](red-team-review.md)
+   R2.
+
+The **single most important mitigation for case 2 is rotating the token
+after any run against a machine where malware was found** — treat it as a
+hard post-run step, not a footnote. It caps the theft window regardless of
+whether exfiltration happened.
+
+Mitigations for case 1, in order of how load-bearing they are:
 
 1. **Physical control.** This kit is handed directly to family, not mailed
    or left unattended — the primary control is who holds the drive.

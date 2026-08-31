@@ -98,6 +98,32 @@ follows from documented CLI/OS behavior, not a live test.
   [`docs/iso-role.md`](iso-role.md) for the tradeoff) — pick the edition
   when you actually run `Build-Kit.ps1`.
 
+- **Red team / blue team review** complete — see
+  [`docs/red-team-review.md`](red-team-review.md). Two fixes landed with it:
+  closed the `cmd /c format` and WMI-volume-format deny-list bypasses (with
+  false-positive guards so `Get-Date -Format` and `Format-Table` still
+  pass), and added an off-USB copy of the run transcript to the operator's
+  backup drive so the audit trail isn't single-copy on attacker-reachable
+  media. The review's larger items are decisions, below.
+
+## Open from the red-team review (decisions)
+
+- **Hardware write-protect USB as the default posture** — highest risk
+  reduction in the review, ~$12, no code. Makes the "only safety boundary"
+  (`CLAUDE.md`) immutable in hardware. Recommended before the first real
+  repair.
+- **PreToolUse positive-allow hook** — closes the deny-list bypass class
+  (R1) that no amount of blocklist patterns can. Tool list is now stable
+  enough to enumerate.
+- **Split `winget upgrade` (allow) from `winget install` (deny)** — closes a
+  sanctioned fetch-and-execute path inside the whitelist.
+- **Capability adds**: Windows Update repair, Appx/Store re-registration,
+  WinSxS cleanup, firewall-state review — built-in, no download, high
+  family-PC value. These are what make the kit fix the machines it's aimed
+  at.
+- **Rootkit answer**: document Microsoft Defender Offline (`Start-MpWDOScan`)
+  as a human-escalation (it reboots), not an autonomous tool.
+
 ## Considered and deliberately not done
 
 - **A blocking `PreToolUse` hook** to enforce the tool whitelist positively
