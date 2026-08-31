@@ -150,6 +150,11 @@ $env:CLAUDE_CONFIG_DIR = $stateDir
 $env:DISABLE_AUTOUPDATER = '1'
 Write-KitLog -LogPath $LogPath -Message "CLAUDE_CONFIG_DIR set to $stateDir"
 
+# Clear any stale backup-needs-scan flag from a prior run on this USB, so a
+# leftover flag can't make this run falsely warn that the backup is infected.
+# The agent (re)writes it only if it finds malware this session.
+Remove-Item (Join-Path $KitRoot 'state\backup-needs-scan.flag') -Force -ErrorAction SilentlyContinue
+
 # --- Hand the agent the facts about what already happened ---
 $sessionContext = [ordered]@{
     started_at   = (Get-Date -Format 'o')
@@ -219,8 +224,20 @@ if ($exitCode -eq 0) {
     Write-KitLog -LogPath $LogPath -Level ERROR -Message "Claude Code session exited non-zero ($exitCode). Check $runLogPath before assuming any repair completed."
 }
 
+# Backup hygiene: an infected source machine can copy infected files into
+# the backup, turning the backup drive into a transmission path onto a clean
+# machine. The agent drops state\backup-needs-scan.flag when it found malware
+# (see CLAUDE.md), so this reminder can name the actual risk instead of a
+# boilerplate "maybe scan it". The launcher can't detect malware itself, so
+# absent the flag it still cautions — just at a lower volume.
+$scanFlag = Join-Path $KitRoot 'state\backup-needs-scan.flag'
 if ($backupResult.completed) {
-    Write-KitLog -LogPath $LogPath -Message "Reminder: user data was backed up to $($backupResult.destination). Scan that drive before reusing it elsewhere."
+    if (Test-Path $scanFlag) {
+        $flagBody = (Get-Content $scanFlag -Raw -ErrorAction SilentlyContinue)
+        Write-KitLog -LogPath $LogPath -Level WARN -Message "MALWARE WAS FOUND ON THIS MACHINE and user data was backed up to $($backupResult.destination). That backup MAY CONTAIN INFECTED FILES. Scan it with a clean machine's antivirus BEFORE opening any file from it or plugging the drive into an uninfected computer. Details: $flagBody"
+    } else {
+        Write-KitLog -LogPath $LogPath -Message "Reminder: user data was backed up to $($backupResult.destination). As a precaution, scan that drive before reusing it on another machine."
+    }
 } else {
     Write-KitLog -LogPath $LogPath -Level WARN -Message 'Reminder: NO user-data backup was taken this session.'
 }

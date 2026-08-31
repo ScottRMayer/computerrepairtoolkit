@@ -124,9 +124,13 @@ rebooting the machine out from under you (`/noreboot` on AdwCleaner).
 
 **Built-in Windows:** `sfc`, `DISM`, `chkdsk` / `Repair-Volume`, `fsutil`,
 `MpCmdRun.exe` (Defender), `manage-bde` (status only), `mdsched` (prior
-results only), `pnputil`, `icacls`, `netsh`, `ipconfig`, `ping`, `tracert`,
-`nslookup`, `powercfg`, `cleanmgr`, `winget` (**normal mode only** — absent
-from the Safe Mode allowlist)
+results only), `pnputil`, `icacls`, `netsh` (incl. `advfirewall`),
+`ipconfig`, `ping`, `tracert`, `nslookup`, `powercfg`, `cleanmgr`, `winget`
+(**normal mode only**). Plus, **normal mode only**, the multi-step repairs in
+`docs\tool-invocations.md`: Windows Update reset
+(SoftwareDistribution/catroot2), Store/Start-menu Appx re-registration, and
+WinSxS component cleanup. Run these from the documented procedures — the WU
+reset must stop services before renaming folders or it fails.
 
 Two constraints on that list matter more than the tools:
 
@@ -156,6 +160,25 @@ positive on a family member's file is unrecoverable if you deleted it and
 recoverable if you quarantined it — note the quarantine path in your summary
 so a human can reverse a mistake. Do not pass AdwCleaner `/preinstalled`:
 it removes OEM software the family may actually use, which is a human's call.
+
+### If you find malware, the backup becomes a contamination risk
+
+A user-data backup taken from an infected machine can carry infected files
+(macro documents, an infected `.exe` in Downloads) onto the backup drive,
+which then spreads to a clean machine when someone opens those files. So, if
+you found *any* malware this session **and** `session-context.json` shows a
+backup was taken (`backup.completed: true`):
+
+1. **Write a flag file** at `state\backup-needs-scan.flag` containing the
+   backup destination path and a one-line note of what you found. The
+   launcher reads this and warns the operator at the console.
+2. **State it prominently in your summary**: the backup at
+   `<backup.destination>` may contain infected files and must be scanned
+   with a clean machine's antivirus before anyone opens a file from it or
+   plugs the drive into an uninfected computer.
+
+Do this even if you quarantined or removed the threat — the backup was
+copied from the machine's *prior* state and predates your cleanup.
 
 **Cleanup:** BleachBit (`tools\bleachbit\`), WizTree (`tools\wiztree\`)
 

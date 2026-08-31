@@ -140,6 +140,92 @@ netsh winsock reset                       # requires reboot to fully apply
 In Safe Mode the network flyout UI doesn't render (`NlaSvc` absent), so
 tray indicators lie. Trust `Test-NetConnection`, not the icon.
 
+### Firewall — review state
+
+```powershell
+netsh advfirewall show allprofiles         # read-only: is the firewall on?
+Get-NetFirewallProfile | Select-Object Name, Enabled
+```
+
+⚠️ Read-only review. A **disabled firewall on all profiles is a finding** on
+a possibly-compromised machine — malware commonly turns it off. Report it;
+re-enabling (`Set-NetFirewallProfile -Enabled True`) is a repair action, but
+do it deliberately and note it, since it can break an app the user
+configured to bypass the firewall.
+
+### Windows Update repair — ✅ procedure verified (2026-08-31), normal mode only
+
+WU breakage is one of the most common real-world family-PC failures. The WU
+stack is **absent in Safe Mode**, so this whole section is normal-mode only.
+
+Escalate in this order — cheapest and safest first:
+
+```powershell
+# 1. Component-store repair (fixes the most common corruption cause):
+DISM /Online /Cleanup-Image /RestoreHealth /Source:WIM:E:\iso\install.wim:1 /LimitAccess
+sfc /scannow
+
+# 2. Trigger a fresh scan:
+UsoClient StartScan
+```
+
+If that doesn't resolve it, the classic SoftwareDistribution/catroot2 reset.
+This is well-established and safe — Windows rebuilds both folders on next
+update — but the services **must** be stopped first or the rename fails on
+in-use files:
+
+```powershell
+Stop-Service wuauserv, bits, cryptsvc, msiserver -Force
+Rename-Item "$env:SystemRoot\SoftwareDistribution" "SoftwareDistribution.old" -ErrorAction SilentlyContinue
+Rename-Item "$env:SystemRoot\System32\catroot2"     "catroot2.old"            -ErrorAction SilentlyContinue
+Start-Service wuauserv, bits, cryptsvc, msiserver
+UsoClient StartScan
+```
+
+Notes:
+- `UsoClient StartScan` is functional on Windows 10/11 but lightly
+  documented and can be a no-op on some builds — treat "it ran" as "scan
+  requested", not "scan confirmed". The SoftwareDistribution reset is the
+  reliable lever.
+- The renames touch `C:\Windows`. That's intentional and standard here;
+  the deny list's `Remove-Item C:\Windows` block doesn't apply (this
+  renames, it doesn't delete), and the `.old` folders are recoverable if
+  something goes wrong — which is exactly why this renames rather than
+  deletes.
+- Report what you changed; leave the `.old` folders in place for a human to
+  remove once updates are confirmed working.
+
+### Store / Start menu repair (Appx) — ⚠️ common fix, use with care
+
+"The Start menu / Store is broken" is a frequent complaint and usually an
+Appx registration problem. Targeted re-registration of a single package is
+safer than the blanket re-register:
+
+```powershell
+# Preferred: re-register just the broken component, e.g. the Start menu:
+Get-AppxPackage -AllUsers *StartMenuExperienceHost* |
+    ForEach-Object { Add-AppxPackage -DisableDevelopmentMode -Register "$($_.InstallLocation)\AppXManifest.xml" }
+
+# Broad re-register (SLOW, and noisy with benign errors on provisioned apps):
+Get-AppxPackage -AllUsers |
+    ForEach-Object { Add-AppxPackage -DisableDevelopmentMode -Register "$($_.InstallLocation)\AppXManifest.xml" -ErrorAction SilentlyContinue }
+```
+
+⚠️ The broad form throws benign errors for every package that can't
+re-register (provisioned apps, framework packages) — those are expected, not
+failures. Prefer the targeted form when you know which component is broken.
+Appx has no meaningful function in Safe Mode.
+
+### Disk space — component store cleanup
+
+```powershell
+DISM /Online /Cleanup-Image /AnalyzeComponentStore     # report only
+DISM /Online /Cleanup-Image /StartComponentCleanup     # reclaim superseded updates
+```
+
+Legitimate disk space on machines with a long update history. The analyze
+step tells you whether cleanup is even worth running.
+
 ### Defender
 
 ```powershell
@@ -151,6 +237,15 @@ Get-MpComputerStatus
 ```
 
 `-SignatureUpdate` **fails in Safe Mode** (needs the Windows Update stack).
+
+**Rootkits — human escalation, not an autonomous action.** Defender, MSERT,
+Emsisoft, and AdwCleaner don't reliably catch kernel-level rootkits, and CIM
+inventory can't see what a rootkit hides. The real tool is **Microsoft
+Defender Offline** (`Start-MpWDOScan`), which reboots into a clean pre-boot
+environment to scan — but that reboot **kills this session**, so do not run
+it unattended. If evidence points at a rootkit (Defender detections that
+reappear, discrepancies between what the OS reports and what you observe),
+recommend Defender Offline in your summary for a human to run, and stop.
 
 ### Power, cleanup, packages
 

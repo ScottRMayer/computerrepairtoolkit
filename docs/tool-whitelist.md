@@ -37,15 +37,22 @@ No download, no checksum, no Defender exclusion, and available in Safe Mode
 unless noted — the cheapest capability in the kit.
 
 **Repair:** `sfc`, `DISM`, `chkdsk` / `Repair-Volume`, `fsutil`
+**Windows Update repair:** `UsoClient`, service stop/start + SoftwareDistribution/catroot2 reset *(normal mode only)*
+**Store / Start menu:** `Get-AppxPackage` / `Add-AppxPackage` re-registration *(normal mode only)*
 **Security:** `MpCmdRun.exe` (Defender)
 **Encryption:** `manage-bde` *(status checks — `-off` and `-forcerecovery` are deny-listed)*
 **Hardware:** `mdsched` *(prior results only — see below)*
 **Drivers:** `pnputil`
 **Permissions:** `icacls`
-**Network:** `netsh`, `ipconfig`, `ping`, `tracert`, `nslookup`
+**Network:** `netsh` (incl. `advfirewall`/firewall review), `ipconfig`, `ping`, `tracert`, `nslookup`
 **Power:** `powercfg`
-**Cleanup:** `cleanmgr`
+**Cleanup:** `cleanmgr`, `DISM /StartComponentCleanup`
 **Packages:** `winget` *(normal mode only — see [`docs/safe-mode-constraints.md`](safe-mode-constraints.md))*
+
+Exact procedures for the Windows Update reset, Appx re-registration, and
+firewall review are in [`docs/tool-invocations.md`](tool-invocations.md) —
+they're multi-step, and the WU reset in particular must stop services before
+renaming folders or it fails on in-use files.
 
 Two of these carry constraints that matter more than the tools themselves:
 

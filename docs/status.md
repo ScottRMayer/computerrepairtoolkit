@@ -106,7 +106,27 @@ follows from documented CLI/OS behavior, not a live test.
   backup drive so the audit trail isn't single-copy on attacker-reachable
   media. The review's larger items are decisions, below.
 
-## Open from the red-team review (decisions)
+## From the red-team review
+
+**Done:**
+
+- **Capability adds** — Windows Update repair
+  (SoftwareDistribution/catroot2 reset + `UsoClient`), Store/Start-menu Appx
+  re-registration, WinSxS component cleanup, and firewall-state review.
+  All built-in, normal-mode-only, documented as full procedures in
+  [`docs/tool-invocations.md`](tool-invocations.md). These are what let the
+  kit fix the most common real family-PC failures, not just diagnose them.
+- **Backup-hygiene flag (R8)** — the agent writes
+  `state\backup-needs-scan.flag` when it finds malware and a backup exists;
+  the launcher reads it and escalates its closing message from a routine
+  reminder to a warning that names the backup drive as a contamination risk.
+  The flag is cleared at the start of every run so a stale one can't
+  misfire.
+- **Rootkit answer documented** — Microsoft Defender Offline
+  (`Start-MpWDOScan`) noted as a human-escalation (it reboots, which kills
+  the session), not an autonomous tool.
+
+**Still open (decisions):**
 
 - **Hardware write-protect USB as the default posture** — highest risk
   reduction in the review, ~$12, no code. Makes the "only safety boundary"
@@ -117,12 +137,6 @@ follows from documented CLI/OS behavior, not a live test.
   enough to enumerate.
 - **Split `winget upgrade` (allow) from `winget install` (deny)** — closes a
   sanctioned fetch-and-execute path inside the whitelist.
-- **Capability adds**: Windows Update repair, Appx/Store re-registration,
-  WinSxS cleanup, firewall-state review — built-in, no download, high
-  family-PC value. These are what make the kit fix the machines it's aimed
-  at.
-- **Rootkit answer**: document Microsoft Defender Offline (`Start-MpWDOScan`)
-  as a human-escalation (it reboots), not an autonomous tool.
 
 ## Considered and deliberately not done
 
