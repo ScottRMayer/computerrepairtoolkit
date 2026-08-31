@@ -17,7 +17,10 @@ target Windows machine — don't confuse edits to one for the other.
   "don't re-pitch this" — don't revisit them without the user raising it.
 - The tool whitelist in [`docs/tool-whitelist.md`](docs/tool-whitelist.md)
   and [`kit/CLAUDE.md`](kit/CLAUDE.md) must stay in sync. If you add or
-  remove a tool from one, update the other in the same change.
+  remove a tool from one, update the other in the same change — and run
+  `python3 scripts/test-deny-rules.py`, adding the new tool's invocation to
+  its `MUST_PASS` list. That test is what catches an enforced deny rule
+  accidentally blocking a legitimate repair action.
 - This repo was authored without access to real Windows hardware. Anything
   that claims a behavior on Windows should cite what it's based on
   (Microsoft/Anthropic docs, a registry dump, etc.) — see
@@ -43,7 +46,9 @@ thing to a test suite is
 manual procedure to run on real hardware. `pwsh` (PowerShell 7, cross-platform)
 is available in this sandbox and is enough to catch syntax errors via
 `[System.Management.Automation.Language.Parser]::ParseFile()` — do that for
-any `.ps1` change. It cannot execute Windows-only cmdlets
+any `.ps1` change. A clean parse is not enough on its own: it accepts
+malformed `-f` format strings that throw at runtime, so runtime-test any
+format string you touch. It cannot execute Windows-only cmdlets
 (`Get-CimInstance`, `Add-MpPreference`, `Checkpoint-Computer`, etc.), so a
 clean parse is necessary, not sufficient — nothing here has been
 execution-tested end to end.

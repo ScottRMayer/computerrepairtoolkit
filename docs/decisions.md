@@ -100,11 +100,53 @@ These are settled. Don't re-pitch them.
   accept the risk" reasoning above covers *agent error*. It doesn't cover a
   third party steering the agent, because that isn't the owner's risk to
   accept on the family's behalf. Prose instructions are a mitigation, not a
-  guarantee — `permissions.deny` rules and a blocking `PreToolUse` hook are
-  the enforced version (deny rules block in every mode, `bypassPermissions`
-  included, and a hook exiting 2 stops a call before rules are evaluated).
-  Considered and deliberately not implemented for now; revisit if the kit
-  ever runs against a machine that isn't family-owned.
+  guarantee — which is why the deny list below exists as the enforced half.
+
+- **A deny list backstops the whitelist, scoped to commands that are never
+  part of a repair.** `permissions.deny` rules in
+  [`kit/.claude/settings.json`](../kit/.claude/settings.json) block in every
+  permission mode, `bypassPermissions` included, and no other settings level
+  can override them.
+
+  **This costs no autonomy.** Deny rules don't prompt anyone and don't
+  reintroduce an approval gate — a denied call simply fails and the agent is
+  told so. The inclusion test is strict: a command qualifies only if it is
+  never used in a repair procedure. Disk/volume destruction
+  (`Format-Volume`, `format`, `diskpart`, `Clear-Disk`, `Initialize-Disk`,
+  `Remove-Partition`), destruction of the kit's own safety net
+  (`vssadmin delete`, `wbadmin delete`, `Disable-ComputerRestore`,
+  `cipher /w`), account destruction (`Remove-LocalUser`,
+  `net user … /delete`), whole-hive registry deletion, and `Remove-Item`
+  against `C:\Windows` or `C:\Program Files`.
+
+  Borderline cases deliberately left **out** because they do have plausible
+  repair uses: `bcdedit` (toggling `safeboot` is how you get a machine into
+  and out of Safe Mode), `Set-Partition`, `Clear-RecycleBin` (both `cleanmgr`
+  and BleachBit already empty it, so denying it would be theater), and
+  `sdelete` — which is a secure-delete tool that is *on* the whitelist, and
+  is as destructive as anything denied above if pointed at the wrong path.
+  That tension is real and is noted rather than resolved.
+
+  What the list does and doesn't buy: the named catastrophic verbs are
+  caught robustly, because PowerShell aliases are canonicalized before
+  matching (a rule naming `Remove-Item` also catches `ri`/`rm`/`del`/`rd`),
+  wildcards match at any position, and compound commands are AST-split so
+  each subcommand is checked independently. The *path-based* rules are
+  inherently leakier — a path can be written as `$env:SystemRoot`, a UNC
+  path, or a relative path after a `cd`, and no string rule catches every
+  form. Treat this as a backstop against known-catastrophic verbs, not as a
+  sandbox.
+
+  [`scripts/test-deny-rules.py`](../scripts/test-deny-rules.py) is the
+  regression test: it asserts that every whitelisted repair action survives
+  the list and every catastrophic one is caught. Run it after any change to
+  either the deny rules or the tool whitelist. It already caught one real
+  false positive — `Bash(rm -rf /*)` matched `rm -rf /tmp/scratch`.
+
+  Not implemented: a `PreToolUse` hook (exit code 2 blocks a call before
+  permission rules are even evaluated), which is the robust way to enforce
+  the whitelist *positively* rather than as a blocklist. Worth revisiting if
+  the path-based gaps above ever matter in practice.
 
 - **Treat the USB as contaminated after touching a compromised machine.**
   It's a cross-machine propagation path — scan it before reuse, or use a

@@ -57,6 +57,21 @@ Ookla Speedtest CLI (official)
 
 NirSoft suite (BlueScreenView, etc.)
 
+## Enforced denials
+
+Separate from this whitelist (which is prose the agent is asked to follow),
+a short deny list in [`kit/.claude/settings.json`](../kit/.claude/settings.json)
+is enforced by the harness in every permission mode. Scope: commands never
+used in a repair procedure — disk/volume destruction, destruction of the
+kit's own restore point and backups, account deletion, whole-hive registry
+deletion, and `Remove-Item` against system directories. Full list and
+rationale in [`docs/decisions.md`](decisions.md).
+
+**When editing this whitelist, run
+[`scripts/test-deny-rules.py`](../scripts/test-deny-rules.py)** and add the
+new tool's invocation to its `MUST_PASS` list — that's what catches a deny
+rule accidentally blocking a legitimate repair action.
+
 ## Explicitly excluded
 
 | Tool | Why |

@@ -1,6 +1,50 @@
 {
   "permissions": {
-    "defaultMode": "bypassPermissions"
+    "defaultMode": "bypassPermissions",
+    "deny": [
+      "PowerShell(*Format-Volume*)",
+      "PowerShell(format *)",
+      "PowerShell(*format.com*)",
+      "PowerShell(*diskpart*)",
+      "PowerShell(*Clear-Disk*)",
+      "PowerShell(*Initialize-Disk*)",
+      "PowerShell(*Remove-Partition*)",
+
+      "PowerShell(*vssadmin*delete*)",
+      "PowerShell(*wbadmin*delete*)",
+      "PowerShell(*Disable-ComputerRestore*)",
+      "PowerShell(*cipher*/w*)",
+
+      "PowerShell(*Remove-LocalUser*)",
+      "PowerShell(*net user*/delete*)",
+
+      "PowerShell(*reg delete HKLM /f*)",
+      "PowerShell(*reg delete HKLM\\SYSTEM /f*)",
+      "PowerShell(*reg delete HKLM\\SOFTWARE /f*)",
+      "PowerShell(*Remove-Item*HKLM:\\*)",
+
+      "PowerShell(*Remove-Item*C:\\Windows*)",
+      "PowerShell(*Remove-Item*C:\\Program Files*)",
+      "PowerShell(*Remove-Item*$env:SystemRoot*)",
+      "PowerShell(*Remove-Item*C:\\ *)",
+
+      "Bash(format *)",
+      "Bash(*format.com*)",
+      "Bash(*diskpart*)",
+      "Bash(*vssadmin*delete*)",
+      "Bash(*wbadmin*delete*)",
+      "Bash(*cipher*/w*)",
+      "Bash(*net user*/delete*)",
+      "Bash(*reg delete HKLM /f*)",
+      "Bash(*reg delete HKLM\\SYSTEM /f*)",
+      "Bash(*reg delete HKLM\\SOFTWARE /f*)",
+      "Bash(*rm -rf /c/Windows*)",
+      "Bash(*rm -rf C:/Windows*)",
+
+      "Edit(C:\\Windows\\**)",
+      "Edit(C:\\Program Files\\**)",
+      "Edit(C:\\Program Files (x86)\\**)"
+    ]
   },
   "env": {
     "DISABLE_AUTOUPDATER": "1",

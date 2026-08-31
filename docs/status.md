@@ -30,6 +30,11 @@
   `kit/scripts/`.
 - `kit/CLAUDE.md` carries an explicit untrusted-input section: text read off
   the target machine informs diagnosis but never changes instructions.
+- **Enforced deny list** in `kit/.claude/settings.json` covering commands
+  that are never part of a repair — blocks in every permission mode
+  including `bypassPermissions`, costs no autonomy. Validated by
+  `scripts/test-deny-rules.py`, which asserts every whitelisted repair
+  action survives it and every catastrophic command is caught.
 - Every `.ps1` script in the repo parses cleanly under PowerShell 7's own
   parser (`pwsh` is available in this sandbox even without Windows). This
   catches syntax errors but not behavior — the Windows-only cmdlets these
@@ -67,11 +72,16 @@ follows from documented CLI/OS behavior, not a live test.
 
 ## Considered and deliberately not done
 
-- **`permissions.deny` rules + a blocking `PreToolUse` hook** to enforce the
-  tool whitelist in code rather than prose. Both work under
-  `bypassPermissions` and neither prompts anyone, so neither would reduce
-  autonomy — see [`docs/architecture.md`](architecture.md#the-whitelist-is-prose-and-what-that-does-and-doesnt-mean).
-  Not implemented for now; the plan is a supervised test run first.
+- **A blocking `PreToolUse` hook** to enforce the tool whitelist positively
+  rather than as a blocklist. Works under `bypassPermissions` (exit code 2
+  blocks a call before permission rules are evaluated) and wouldn't reduce
+  autonomy. The deny list covers the catastrophic verbs; the hook is what
+  would close the path-based gaps described in
+  [`docs/decisions.md`](decisions.md). Revisit if those gaps matter in
+  practice.
+- **`bcdedit`, `Set-Partition`, `Clear-RecycleBin` in the deny list** —
+  excluded because each has a plausible repair use. See
+  [`docs/decisions.md`](decisions.md).
 
 ## Resume here
 

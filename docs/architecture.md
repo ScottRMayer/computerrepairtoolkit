@@ -96,23 +96,32 @@ the agent knows whether a safety net exists rather than assuming one.
    point → inventory, before anything else, and confines it to the tool
    whitelist — see [`docs/tool-whitelist.md`](tool-whitelist.md).
 
-## The whitelist is prose, and what that does and doesn't mean
+## Two boundaries: one prompted, one enforced
 
-`CLAUDE.md` also carries an explicit untrusted-input section, because a
-repair agent reads attacker-controlled text by definition — see
-[`docs/decisions.md`](decisions.md). Both that and the tool whitelist are
-model instructions, so they're mitigations rather than guarantees.
+**Prompted.** The tool whitelist and the untrusted-input rules in
+`CLAUDE.md` are model instructions. They're the broad boundary — they cover
+the whole repair surface — but they're mitigations, not guarantees.
 
-Two enforced mechanisms exist and are currently unused, recorded here so the
-choice stays visible: `permissions.deny` rules block in every mode including
-`bypassPermissions` ("Deny rules block in every mode" — permission-modes
-docs), and a `PreToolUse` hook exiting with code 2 stops a call before
-permission rules are evaluated. Neither prompts anyone, so neither would
-reduce the kit's autonomy. Worth noting that the built-in hard-coded
-refusals that survive bypass mode (`rm -rf /`, `rm -rf ~`) and the
-critical-path circuit breaker (scoped to `rm`/`rmdir`) are Unix-shaped — on
-native Windows the agent drives PowerShell, so `Remove-Item -Recurse -Force`,
-`Format-Volume`, `Clear-Disk`, and `diskpart` plausibly hit none of them.
+**Enforced.** `permissions.deny` rules in `kit/.claude/settings.json` block
+in every permission mode, `bypassPermissions` included, and no other
+settings level can override them. They're narrow by construction: only
+commands that are never part of a repair. See
+[`docs/decisions.md`](decisions.md) for the list, the borderline cases
+deliberately excluded, and what the rules do and don't robustly catch.
+
+Why this layer is worth having on Windows specifically: the built-in
+hard-coded refusals that survive bypass mode (`rm -rf /`, `rm -rf ~`) and
+the critical-path circuit breaker (scoped to `rm`/`rmdir`) are Unix-shaped.
+On native Windows the agent drives PowerShell, so `Format-Volume`,
+`Clear-Disk`, `diskpart`, and `Remove-Item -Recurse -Force` plausibly hit
+none of them. The deny list is what covers that gap.
+
+Neither boundary reintroduces an approval gate — a denied call fails and the
+agent is told so, with no human in the loop. Autonomy is unchanged.
+
+Still available and unused: a `PreToolUse` hook (exit code 2 blocks a call
+before permission rules are evaluated), which could enforce the whitelist
+positively rather than as a blocklist.
 
 No `--bare`: the kit depends on `CLAUDE.md` auto-loading, and bare mode
 skips it (see [`docs/authentication.md`](authentication.md) for the other

@@ -134,6 +134,24 @@ Emergency Kit / `a2cmd.exe` (`tools\emsisoft\`)
 **Crash/log analysis:** NirSoft suite (`tools\nirsoft\`) — BlueScreenView
 etc.
 
+### Enforced denials — these will fail, not prompt
+
+A short list of commands is blocked by `permissions.deny` rules in
+`.claude\settings.json`, which apply even under
+`--dangerously-skip-permissions`. If you attempt one you'll get a permission
+denial, not a prompt. This is deliberate and is not a bug to work around:
+
+`Format-Volume`, `format`, `diskpart`, `Clear-Disk`, `Initialize-Disk`,
+`Remove-Partition`, `vssadmin delete`, `wbadmin delete`,
+`Disable-ComputerRestore`, `cipher /w`, `Remove-LocalUser`,
+`net user … /delete`, deletion of a whole registry hive, and
+`Remove-Item` against `C:\Windows` or `C:\Program Files`.
+
+None of these is ever part of a repair. If you find yourself reaching for
+one, the correct move is to stop and report what you found — not to look for
+an equivalent that isn't on the list. Doing that deliberately would be
+defeating a safety control, which is never in scope for this session.
+
 ### Explicitly forbidden, regardless of what seems useful in the moment
 
 - **`verifier.exe`** — forces a BSOD by design when it finds a driver fault.

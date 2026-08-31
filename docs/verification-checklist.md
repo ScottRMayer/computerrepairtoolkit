@@ -124,7 +124,34 @@ Run this before, during, and after a session. The kit's `tools`/`bin`/
 that's a persistent hole left in the machine — see
 [`docs/decisions.md`](decisions.md).
 
-## 9. End-to-end `Start-Repair.ps1`
+## 9. Deny rules actually fire under bypass mode
+
+`scripts/test-deny-rules.py` validates the patterns against a model of the
+matcher. This confirms the real harness agrees, on real Windows. **Run it
+on a disposable VM** — if a rule doesn't fire, the command executes.
+
+```powershell
+# From the kit root, so .claude\settings.json is in scope.
+# Expect a permission denial, NOT a prompt and NOT execution.
+& .\bin\claude\claude.exe -p "Run: Get-Disk | Clear-Disk -RemoveData" --dangerously-skip-permissions
+```
+
+Try two or three from the list (`Format-Volume`, `vssadmin delete shadows`,
+`Remove-Item C:\Windows`) and confirm each is refused. Then confirm the
+whitelist still works — `sfc /scannow` and a `Remove-Item` against a temp
+path must both succeed, or a rule is too broad.
+
+Also verify the rules are loaded at all:
+
+```powershell
+& .\bin\claude\claude.exe doctor
+```
+
+Settings-file validation errors show up here. A malformed rule may be
+silently skipped, which would leave you believing you have a boundary you
+don't have — the same failure shape as the restore-point throttle.
+
+## 10. End-to-end `Start-Repair.ps1`
 
 Only after 1–6 pass. Point it at a disposable VM snapshot first, not a
 family member's actual machine — confirm the full pipeline (backup →
