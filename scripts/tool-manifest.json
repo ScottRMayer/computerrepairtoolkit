@@ -1,0 +1,57 @@
+{
+  "_comment": "Populate this after downloading each whitelisted tool once from its vendor site, per docs/usb-layout.md#fetching-and-checksumming-tools and docs/tool-whitelist.md. Build-Kit.ps1 refuses to place a binary on the USB whose SHA-256 doesn't match the value recorded here. Empty/placeholder entries are skipped with a warning, not silently trusted — see docs/status.md.",
+  "tools": [
+    {
+      "name": "sysinternals-suite",
+      "url": "https://download.sysinternals.com/files/SysinternalsSuite.zip",
+      "sha256": "",
+      "destination": "tools\\sysinternals"
+    },
+    {
+      "name": "adwcleaner",
+      "url": "",
+      "sha256": "",
+      "destination": "tools\\adwcleaner",
+      "_note": "Malwarebytes distributes a fresh download link per release rather than a stable URL - resolve at build time."
+    },
+    {
+      "name": "emsisoft-emergency-kit",
+      "url": "",
+      "sha256": "",
+      "destination": "tools\\emsisoft"
+    },
+    {
+      "name": "bleachbit-portable",
+      "url": "",
+      "sha256": "",
+      "destination": "tools\\bleachbit"
+    },
+    {
+      "name": "wiztree-portable",
+      "url": "",
+      "sha256": "",
+      "destination": "tools\\wiztree"
+    },
+    {
+      "name": "smartmontools",
+      "url": "",
+      "sha256": "",
+      "destination": "tools\\smartmontools",
+      "_note": "No official portable build - extract smartctl.exe from the NSIS installer at build time, see docs/usb-layout.md."
+    },
+    {
+      "name": "speedtest-cli",
+      "url": "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-win64.zip",
+      "sha256": "",
+      "destination": "tools\\speedtest",
+      "_note": "Pin the actual current version - this URL is illustrative, verify against Ookla's published download page at build time."
+    },
+    {
+      "name": "nirsoft-suite",
+      "url": "",
+      "sha256": "",
+      "destination": "tools\\nirsoft",
+      "_note": "NirSoft ships each utility as a separate download - assemble the subset actually referenced by CLAUDE.md (BlueScreenView etc.) rather than the entire catalog."
+    }
+  ]
+}

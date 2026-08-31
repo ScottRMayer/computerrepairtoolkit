@@ -1,0 +1,22 @@
+# Secrets — never commit a real credential
+kit/config/auth.env
+**/auth.env
+!**/auth.env.example
+
+# Build output — assembled onto an actual USB drive, not vendored here
+kit/bin/
+kit/tools/
+kit/iso/
+kit/state/
+kit/logs/
+kit/backups/
+
+# Windows ISOs / WIMs are large binaries that don't belong in git
+*.iso
+*.wim
+*.esd
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp

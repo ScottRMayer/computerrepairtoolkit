@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "env": {
+    "DISABLE_AUTOUPDATER": "1",
+    "DISABLE_ERROR_REPORTING": "1"
+  },
+  "autoUpdatesChannel": "stable"
+}
