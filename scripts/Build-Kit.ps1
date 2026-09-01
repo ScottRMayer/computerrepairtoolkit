@@ -38,7 +38,14 @@ param(
     # from a USB path on a machine that never had Claude installed — gets
     # answered before anyone downloads 8GB of tools and an ISO to find out the
     # binary didn't survive the copy. Run this first, always.
-    [switch]$Minimal
+    [switch]$Minimal,
+
+    # Optional recovery ISO(s) to stage into \ISO\ for the Ventoy boot menu
+    # (WinPE recovery image, MemTest86+, etc.). Ventoy itself is installed to
+    # the USB separately with its own installer BEFORE this build — see
+    # docs/offline-repair-playbook.md. This only copies ISOs into place and
+    # checksums them.
+    [string[]]$RecoveryIso
 )
 
 if ($Minimal) { $SkipToolFetch = $true }
@@ -212,6 +219,24 @@ if ($IsoPath) {
     }
 } else {
     Write-BuildLog "No -IsoPath supplied - DISM /RestoreHealth will have no local source on the target machine. See docs/iso-role.md." 'WARN'
+}
+
+# --- 5b. Stage recovery ISOs for the Ventoy boot menu ------------------------
+if ($RecoveryIso -and -not $Minimal) {
+    $isoDir = Join-Path $UsbRoot 'ISO'
+    New-Item -ItemType Directory -Path $isoDir -Force | Out-Null
+    foreach ($iso in $RecoveryIso) {
+        if (-not (Test-Path $iso)) {
+            Write-BuildLog "RecoveryIso '$iso' not found — skipping." 'WARN'
+            continue
+        }
+        $name = Split-Path $iso -Leaf
+        Write-BuildLog "Staging recovery ISO $name into \ISO\ (Ventoy will offer it at boot)..."
+        Copy-Item -Path $iso -Destination (Join-Path $isoDir $name) -Force
+        $h = (Get-FileHash -Path (Join-Path $isoDir $name) -Algorithm SHA256).Hash
+        Write-BuildLog "  $name SHA256: $h"
+    }
+    Write-BuildLog "NOTE: Ventoy must already be installed to this USB (separate manual step) for these ISOs to be bootable. See docs/offline-repair-playbook.md."
 }
 
 # --- 6. Build gate: prove the copied binary actually runs from the USB path ---

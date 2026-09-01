@@ -39,6 +39,11 @@ E:\                              (drive letter varies)
 │   └── session-context.json      what the launcher did, read by the agent first
 ├── iso\
 │   └── <edition>-install.wim     for DISM /Source: — see docs/iso-role.md
+├── ISO\                          Ventoy boot menu (only if the USB is Ventoy-based)
+│   ├── HirensBootCD_PE.iso       WinPE recovery env for "won't boot" — offline-repair-playbook.md
+│   └── memtest86plus.iso         offline RAM test (optional)
+├── hooks\
+│   └── PreToolUse-Guard.ps1      argument-level guard, wired via .claude/settings.json
 ├── logs\                         per-run transcripts (PowerShell transcript + claude stream-json)
 └── backups\                      only used if the operator picks the kit's own drive
                                   as the backup destination — usually they should

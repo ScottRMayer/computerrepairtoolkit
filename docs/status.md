@@ -4,7 +4,32 @@
 > first-principles workshop (7 expert lenses → 3 adversarial critics →
 > synthesis). Where anything here conflicts with it, the spec wins.
 
-## Latest pass — Tier-1 safety hardening (from the ecosystem research)
+## Latest pass — Tier-3: the "won't boot" layer
+
+Closes the kit's biggest structural gap (it only worked on a machine that
+already boots):
+
+- **`docs/offline-repair-playbook.md`** — the WinRE/WinPE procedure for a
+  non-booting machine: Ventoy multiboot setup, BCD rebuild (`bootrec`/
+  `bcdboot`), offline SFC + DISM (`/Source:` from a bundled install.wim),
+  offline registry-hive repair (documented, kept manual — it bricks boot when
+  wrong), and the honest division of labor: **the offline layer gets Windows
+  bootable; the autonomous agent takes over once it boots.** No autonomous fix
+  exists for a dead OS — no OS, no cloud brain.
+- **`kit/scripts/Invoke-OfflineRepair.ps1`** — runs from WinPE. Assessment-only
+  by default; `-Fix` applies the safe standard sequence (BCD rebuild + offline
+  SFC/DISM). Auto-detects the Windows volume (WinPE reassigns letters),
+  refuses to modify a BitLocker-locked volume without the key, and never
+  automates hive edits. Executed end-to-end here (clean exit on no-Windows).
+- **Build-Kit `-RecoveryIso`** stages + checksums WinPE/MemTest ISOs into
+  `\ISO\` for the Ventoy menu. Ventoy install itself stays a documented manual
+  step (its installer reformats the drive).
+
+Windows-specific behavior (bootrec/bcdboot/offline DISM, drive-letter
+detection, BitLocker offline) is parse-clean but **hardware-unverified** — see
+the playbook and checklist.
+
+## Earlier pass — Tier-1 safety hardening (from the ecosystem research)
 
 The four safety upgrades the web research validated are now built and tested:
 
