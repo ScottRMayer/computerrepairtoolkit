@@ -219,6 +219,8 @@ You can still use the bundled tools by hand — exact commands are in
 docs\tool-invocations.md on this drive.
 "@
     & (Join-Path $KitRoot 'scripts\03-Set-DefenderExclusions.ps1') -Remove
+    # Give the operator a readable card even on the offline path.
+    & (Join-Path $KitRoot 'scripts\Write-RepairReport.ps1') -ExitCode 3 | Out-Null
     # Distinct exit code so "couldn't start" is never mistaken for "nothing to fix".
     exit 3
 }
@@ -302,6 +304,16 @@ if ($backupResult.completed) {
     }
 } else {
     Write-KitLog -LogPath $LogPath -Level WARN -Message 'Reminder: NO user-data backup was taken this session.'
+}
+
+# Human-readable report card. This is the deliverable the operator actually
+# reads; the jsonl transcript is for the record. Opens automatically when run
+# interactively (via Repair-This-PC.cmd).
+try {
+    $reportPath = & (Join-Path $KitRoot 'scripts\Write-RepairReport.ps1') -ExitCode $exitCode
+    Write-KitLog -LogPath $LogPath -Message "Report card written to $reportPath"
+} catch {
+    Write-KitLog -LogPath $LogPath -Level WARN -Message "Could not generate the report card: $_"
 }
 
 exit $exitCode
