@@ -412,6 +412,75 @@ NirSoft binaries are routine HackTool/PUA detections — this is why
 
 ---
 
+## Driver recovery
+
+### Snappy Driver Installer Origin (SDIO) — 🔎 verified design (2026-09-01)
+
+```powershell
+# Enumerate what's missing/outdated against the offline driverpacks on the USB:
+sdio.exe -nogui -license -verbose:2
+
+# Scripted, unattended install (use a curated script file, not blanket -autoinstall):
+sdio.exe -script:"E:\tools\sdio\repair.script" -autoclose
+```
+
+Fixes the "no network / GPU / chipset driver after a repair or reinstall"
+dead-end, fully offline. Bundle the **network-only** driverpack first so the
+agent can restore connectivity, then let it pull the rest if online. Prefer a
+curated `-script:` over `-autoinstall` so it installs only what's actually
+missing. Confirm the exact switches with `sdio.exe -?` at build time.
+
+## Crash-dump root cause
+
+### cdb.exe (`!analyze -v`) — 🔎 verified design (2026-09-01)
+
+```powershell
+# Analyze the newest minidump headlessly:
+$dmp = Get-ChildItem "$env:SystemRoot\Minidump\*.dmp" | Sort-Object LastWriteTime -Desc | Select-Object -First 1
+& "E:\tools\windbg\cdb.exe" -z $dmp.FullName -c "!analyze -v; q"
+```
+
+Goes well beyond BlueScreenView's culprit-driver guess — `!analyze -v` names
+the faulting module, bugcheck meaning, and stack. Needs a symbol path; bundle
+a symbol cache or set `_NT_SYMBOL_PATH=SRV*C:\symbols*https://msdl.microsoft.com/download/symbols`
+(the SRV\* form needs internet). Read-only analysis; safe to run anytime.
+
+## Debloat / telemetry (normal mode, always behind a restore point)
+
+### Win11Debloat — ✅ verified (2026-09-01)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "E:\tools\win11debloat\Win11Debloat.ps1" `
+    -Silent -RunDefaults -CreateRestorePoint
+```
+
+MIT, pure PowerShell, **reversible** (Group Policy keys, not destructive
+deletes; removed Store apps are reinstallable). `-RunDefaults` is the
+conservative preset; `-CreateRestorePoint` is mandatory here. Ship a vetted
+config rather than aggressive removals — this is a family PC, not a fresh
+enthusiast install. Source: [Win11Debloat automation wiki](https://github.com/Raphire/Win11Debloat/wiki/Automation).
+
+### O&O ShutUp10++ — ✅ verified (2026-09-01)
+
+```powershell
+OOSU10.exe "E:\tools\oosu10\recommended.cfg" /quiet
+```
+
+Applies a saved profile silently and creates a restore point. **Curate the
+`.cfg` to O&O's "recommended (green)" settings** so a family member's PC isn't
+over-hardened into breaking features they use. Apply-once during a repair, not
+a persistence agent — Windows updates occasionally re-enable settings.
+
+## Built-in, underused
+
+```powershell
+powercfg /batteryreport /output "E:\logs\battery.html"     # battery wear
+powercfg /energy /output "E:\logs\energy.html" /duration 60 # power-drain audit
+winget configure --file "E:\config\apps.dsc.yaml"          # declarative app reinstall (normal mode)
+```
+
+---
+
 ## Candidates not yet added
 
 **Sophos Scan & Clean** — free, no-install, portable second-opinion scanner

@@ -182,6 +182,17 @@ copied from the machine's *prior* state and predates your cleanup.
 
 **Cleanup:** BleachBit (`tools\bleachbit\`), WizTree (`tools\wiztree\`)
 
+**Driver recovery:** Snappy Driver Installer Origin (`tools\sdio\sdio.exe`) —
+offline driver matching, `-script:` for scripted installs (normal mode)
+
+**Crash-dump analysis:** `cdb.exe` (`tools\windbg\cdb.exe`) — `!analyze -v` on
+`%SystemRoot%\Minidump\*.dmp` for BSOD root cause
+
+**Debloat/telemetry (normal mode, ALWAYS behind a restore point):** Win11Debloat
+(`tools\win11debloat\`, reversible, use `-CreateRestorePoint`), O&O ShutUp10++
+(`tools\oosu10\`, curated "recommended" config only). Do not use aggressive
+presets on a family machine — see `docs\tool-invocations.md`.
+
 **Disk health:** `smartctl` (`tools\smartmontools\smartctl.exe`)
 
 **Network:** Ookla Speedtest CLI (`tools\speedtest\`)

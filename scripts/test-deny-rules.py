@@ -68,6 +68,12 @@ MUST_PASS = [
     ("Bash", "sfc /scannow"),
     ("Bash", "rm -rf /tmp/scratch"),
     ("Bash", "rm -rf /c/Users/x/AppData/Local/Temp/junk"),
+    # Tier-2 ecosystem tool adds (docs/ecosystem-catalog.md) — none is catastrophic.
+    ("PowerShell", r'E:\tools\sdio\sdio.exe -script:"E:\tools\sdio\repair.script" -autoclose'),
+    ("PowerShell", r'& "E:\tools\windbg\cdb.exe" -z C:\Windows\Minidump\x.dmp -c "!analyze -v; q"'),
+    ("PowerShell", r'powershell -ExecutionPolicy Bypass -File "E:\tools\win11debloat\Win11Debloat.ps1" -Silent -RunDefaults -CreateRestorePoint'),
+    ("PowerShell", r'OOSU10.exe "E:\tools\oosu10\recommended.cfg" /quiet'),
+    ("PowerShell", r'powercfg /batteryreport /output "E:\logs\battery.html"'),
 ]
 
 # Never part of a repair procedure. Every one must be denied.

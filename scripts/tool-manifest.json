@@ -60,6 +60,34 @@
       "sha256": "",
       "destination": "tools\\nirsoft",
       "_note": "NirSoft ships each utility as a separate download - assemble the subset actually referenced by CLAUDE.md (BlueScreenView etc.) rather than the entire catalog."
+    },
+    {
+      "name": "snappy-driver-installer-origin",
+      "url": "",
+      "sha256": "",
+      "destination": "tools\\sdio",
+      "_note": "OSS driver matcher/installer, offline + scriptable (sdio.exe -script:). Added per docs/ecosystem-catalog.md. Bundle the NETWORK-ONLY driverpack (~hundreds of MB) to bootstrap connectivity; full packs are tens of GB. Official mirror: glenn.delahoy.com/snappy-driver-installer-origin. Verify checksum at build time."
+    },
+    {
+      "name": "windows-debugging-tools-cdb",
+      "url": "",
+      "sha256": "",
+      "destination": "tools\\windbg",
+      "_note": "cdb.exe (console WinDbg engine) for headless crash-dump root-cause: cdb.exe -z <dmp> -c \"!analyze -v;q\". Ships inside the Windows SDK 'Debugging Tools for Windows' feature (Microsoft, free). Extract the standalone Debugging Tools payload; bundle a symbol cache or use SRV* at build time. See docs/ecosystem-catalog.md."
+    },
+    {
+      "name": "win11debloat",
+      "url": "",
+      "sha256": "",
+      "destination": "tools\\win11debloat",
+      "_note": "Raphire/Win11Debloat, MIT, pure PowerShell, reversible (Group Policy keys, not deletes). Silent: -Silent -RunDefaults -CreateRestorePoint. Ship a vetted config; always pair with the restore point. github.com/Raphire/Win11Debloat - pin a release tag + checksum."
+    },
+    {
+      "name": "oo-shutup10",
+      "url": "",
+      "sha256": "",
+      "destination": "tools\\oosu10",
+      "_note": "O&O ShutUp10++, freeware portable single EXE. Silent: OOSU10.exe <profile>.cfg /quiet. Curate the .cfg to O&O 'recommended (green)' so a family PC isn't over-hardened. Closed-source, apply-once (not a persistence agent). oo-software.com/en/shutup10."
     }
   ]
 }

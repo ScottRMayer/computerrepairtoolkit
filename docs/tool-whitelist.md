@@ -93,6 +93,23 @@ reasoning that removed SDelete.
 
 BleachBit, WizTree
 
+## Driver recovery
+
+**Snappy Driver Installer Origin** (`sdio.exe`) — offline, scriptable driver
+matcher/installer using bundled driverpacks. Fills the "no driver after
+repair/reinstall" gap. Added per [`docs/ecosystem-catalog.md`](ecosystem-catalog.md).
+
+## Crash-dump analysis
+
+**`cdb.exe`** (Windows Debugging Tools) — headless `!analyze -v` root-cause on
+minidumps, beyond NirSoft BlueScreenView's driver guess.
+
+## Debloat / telemetry (normal mode only)
+
+**Win11Debloat** (reversible, `-CreateRestorePoint`) and optionally **O&O
+ShutUp10++** (curated "recommended" `.cfg`). Both apply-once, behind a restore
+point. Never the aggressive presets on a family machine.
+
 ## Disk health
 
 `smartctl` (smartmontools) — no official portable build; extract from the
