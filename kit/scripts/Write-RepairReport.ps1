@@ -39,6 +39,31 @@ $summary = Read-JsonSafe (Join-Path $KitRoot 'state\repair-summary.json')
 $scanFlag = Join-Path $KitRoot 'state\backup-needs-scan.flag'
 $scanWarn = if (Test-Path $scanFlag) { (Get-Content $scanFlag -Raw -ErrorAction SilentlyContinue) } else { $null }
 
+function Get-TranscriptFinalMessage {
+    # Fallback for when the agent didn't leave repair-summary.json: pull its
+    # final assistant text out of the newest run transcript, so the operator
+    # still sees the agent's own words instead of a bare "no summary."
+    try {
+        $log = Get-ChildItem (Join-Path $KitRoot 'logs') -Filter 'claude-run-*.jsonl' -ErrorAction Stop |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not $log) { return $null }
+        $final = $null
+        foreach ($line in (Get-Content $log.FullName)) {
+            if (-not $line.Trim()) { continue }
+            $obj = $null; try { $obj = $line | ConvertFrom-Json } catch { continue }
+            if ($obj.type -eq 'result' -and $obj.result) { $final = [string]$obj.result }
+            elseif ($obj.type -eq 'assistant' -and $obj.message.content) {
+                $txt = ($obj.message.content | ForEach-Object { $_.text }) -join "`n"
+                if ($txt.Trim()) { $final = $txt }
+            }
+        }
+        return $final
+    } catch { return $null }
+}
+
+# Only reach into the transcript when the structured summary is missing.
+$transcriptTail = if (-not $summary) { Get-TranscriptFinalMessage } else { $null }
+
 # --- Decide the headline badge -------------------------------------------
 # Launcher exit code is authoritative for "did it even run"; the agent's
 # self-reported outcome refines a run that completed.
@@ -108,12 +133,17 @@ $agentBlock = if ($summary) {
     </div>
 "@
 } else {
+    $tailHtml = if ($transcriptTail) {
+        "<h2>The assistant's last words</h2><p>Its structured summary is missing, but here is the final thing it reported before the session ended:</p><blockquote style='border-left:3px solid #d0d7de;margin:8px 0;padding:6px 14px;color:#333;white-space:pre-wrap'>$(Enc $transcriptTail)</blockquote>"
+    } else {
+        "<h2>Details</h2>"
+    }
 @"
     <div class="card">
-      <h2>Details</h2>
-      <p class="muted">The repair assistant did not leave a structured summary
-      (it may have been interrupted, or couldn't get online). The complete
-      record of the session is in the <b>logs</b> folder on the drive.</p>
+      $tailHtml
+      <p class="muted">A structured summary wasn't written this session (the
+      assistant may have been interrupted or run out of room). The complete
+      record is in the <b>logs</b> folder on the drive.</p>
     </div>
 "@
 }
