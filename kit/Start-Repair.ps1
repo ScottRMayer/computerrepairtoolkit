@@ -285,6 +285,12 @@ try {
         -RedirectStandardOutput $runLogPath `
         -RedirectStandardError "$runLogPath.err"
 
+    # Touching .Handle caches the process handle so .ExitCode is readable after
+    # the process exits. Without this, Start-Process -PassThru returns $null for
+    # ExitCode on a completed run, and the launcher wrongly reports failure on
+    # success. (Confirmed on real hardware: a clean run logged "exited non-zero ()".)
+    $null = $proc.Handle
+
     if (-not $proc.WaitForExit($MaxMinutes * 60 * 1000)) {
         Write-KitLog -LogPath $LogPath -Level WARN -Message "Agent exceeded the $MaxMinutes-minute wall-clock cap. Interrupting, then resuming once to let it finish and write its summary."
         try { $proc.CloseMainWindow() | Out-Null } catch { }

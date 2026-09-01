@@ -111,10 +111,14 @@ Write-BuildLog "Native binary staged. The build gate below is the real check tha
 # --- 2. Copy the kit tree ---------------------------------------------------
 Write-BuildLog "Copying kit\ -> $UsbRoot"
 Copy-Item -Path (Join-Path $RepoRoot 'kit\*') -Destination $UsbRoot -Recurse -Force -Exclude 'config'
-# config\ copied separately so we don't clobber an existing auth.env on rebuild
+# config\ copied separately, file by file, so we ship every template and policy
+# file (auth.env.example, system-prompt-append.txt, settings, etc.) WITHOUT
+# clobbering a real auth.env that a prior build already placed on the drive.
 $destConfigDir = Join-Path $UsbRoot 'config'
 New-Item -ItemType Directory -Path $destConfigDir -Force | Out-Null
-Copy-Item -Path (Join-Path $RepoRoot 'kit\config\auth.env.example') -Destination $destConfigDir -Force
+Get-ChildItem -Path (Join-Path $RepoRoot 'kit\config') -File |
+    Where-Object { $_.Name -ne 'auth.env' } |
+    ForEach-Object { Copy-Item -Path $_.FullName -Destination $destConfigDir -Force }
 
 foreach ($dir in @('state\.claude', 'logs', 'backups', 'iso')) {
     New-Item -ItemType Directory -Path (Join-Path $UsbRoot $dir) -Force | Out-Null

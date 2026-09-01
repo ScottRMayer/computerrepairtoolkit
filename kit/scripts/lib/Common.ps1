@@ -38,9 +38,13 @@ function Write-KitLog {
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $line = "[$timestamp] [$Level] $Message"
 
+    # ERROR uses red Write-Host rather than Write-Error on purpose: Write-Error
+    # wraps the message in a "Write-KitLog : ... WriteErrorException" stack that
+    # reads like the script itself crashed. For an operator-facing repair tool,
+    # a plain red line is clearer.
     switch ($Level) {
-        'WARN'  { Write-Warning $line }
-        'ERROR' { Write-Error $line -ErrorAction Continue }
+        'WARN'  { Write-Host $line -ForegroundColor Yellow }
+        'ERROR' { Write-Host $line -ForegroundColor Red }
         default { Write-Host $line }
     }
 
