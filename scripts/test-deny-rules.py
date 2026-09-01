@@ -101,6 +101,20 @@ MUST_BLOCK = [
     ("Bash", "vssadmin delete shadows /all"),
     ("Bash", "format C:"),
     ("Bash", "rm -rf /c/Windows/System32"),
+    ("Bash", "cmd /c format c:"),
+    # The tool-name gap: Claude Code uses the Bash tool when Git for Windows is
+    # present, so a PowerShell verb invoked THROUGH bash must be caught by a
+    # Bash rule. Before these mirrors existed, every one of these executed.
+    ("Bash", 'powershell -c "Clear-Disk -Number 0 -RemoveData"'),
+    ("Bash", 'powershell.exe -Command "Format-Volume -DriveLetter C"'),
+    ("Bash", 'pwsh -c "Remove-Partition -DiskNumber 0 -PartitionNumber 2"'),
+    ("Bash", 'powershell -c "Disable-BitLocker -MountPoint C:"'),
+    ("Bash", 'powershell -c "Disable-ComputerRestore -Drive C:\\"'),
+    ("Bash", 'powershell -c "Remove-LocalUser -Name Dad"'),
+    ("Bash", 'powershell -c "Initialize-Disk -Number 1"'),
+    ("Bash", 'powershell -c "Remove-Item C:\\Windows\\System32 -Recurse -Force"'),
+    ("Bash", 'powershell -c "Remove-Item HKLM:\\SOFTWARE -Recurse"'),
+    ("Bash", 'powershell -c "$env:SystemRoot | ForEach { Remove-Item $env:SystemRoot -Recurse }"'),
 ]
 
 

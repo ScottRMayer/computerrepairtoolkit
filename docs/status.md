@@ -1,5 +1,39 @@
 # Status
 
+> **[`docs/spec.md`](spec.md) is now the authoritative design**, produced by a
+> first-principles workshop (7 expert lenses → 3 adversarial critics →
+> synthesis). Where anything here conflicts with it, the spec wins.
+
+## Latest pass — what the workshop changed
+
+- **Fixed a live security hole.** The deny list was written almost entirely as
+  `PowerShell(...)` rules, but Claude Code uses the **Bash** tool when Git for
+  Windows is present. So `powershell -c "Clear-Disk -Number 0"` routed through
+  the Bash tool matched *nothing* and would have executed. Every catastrophic
+  verb is now mirrored as a `Bash(...)` rule (64 total), with 10 regression
+  cases proving the bypass is closed.
+- **Environment scrub before handoff.** An inherited `ANTHROPIC_API_KEY` on the
+  target outranks the owner's subscription token in Claude Code's credential
+  precedence — it would silently shadow it and misroute billing. That plus
+  TLS-weakening vars (`NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`,
+  `HTTPS_PROXY`, `SSL_CERT_FILE`, `NODE_OPTIONS`, …) are stripped from the
+  child environment, closing the one channel no on-disk guardrail can see.
+- **Connectivity is now a launcher precondition** (`04-Ensure-Connectivity.ps1`),
+  not the agent's job — with a **clock-skew rung first**. A dead CMOS battery
+  makes the clock wrong, which fails TLS, which looks exactly like "the
+  internet is broken": the one outage a cloud-brained agent is uniquely blind
+  to. Ladder: clock → adapter/Wi-Fi → DNS → hosts hijack → proxy (WinHTTP
+  *and* WinINET). If it can't get online the agent is never launched; exit
+  code 3 distinguishes "couldn't start" from "nothing to fix".
+- **Model pinned** (`--model claude-opus-5 --fallback-model claude-sonnet-5`)
+  so unattended reasoning quality can't drift, with a fallback so a capacity
+  blip doesn't kill a repair nobody is watching.
+- **`Build-Kit.ps1 -Minimal`** builds the ~300MB smoke-test drive, plus a build
+  gate that runs `claude.exe --version` from the USB path and refuses to ship a
+  drive whose copied binary doesn't launch.
+- **Operator entry point**: `Repair-This-PC.cmd` (self-elevating double-click)
+  and `START-HERE.txt` in plain language.
+
 ## Done and verified (against Anthropic's published docs, 2026-08-31)
 
 - Tool whitelist expanded to 31 entries — see

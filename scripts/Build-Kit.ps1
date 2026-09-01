@@ -30,8 +30,18 @@
 param(
     [Parameter(Mandatory)][string]$UsbRoot,
     [string]$IsoPath,
-    [switch]$SkipToolFetch
+    [switch]$SkipToolFetch,
+
+    # Build the ~300MB smoke-test drive: claude.exe + the kit tree, no tool
+    # binaries and no Windows image. This exists so the ONE load-bearing
+    # assumption — does the copied native claude.exe launch and authenticate
+    # from a USB path on a machine that never had Claude installed — gets
+    # answered before anyone downloads 8GB of tools and an ISO to find out the
+    # binary didn't survive the copy. Run this first, always.
+    [switch]$Minimal
 )
+
+if ($Minimal) { $SkipToolFetch = $true }
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -174,6 +184,11 @@ if ($SkipToolFetch) {
 }
 
 # --- 5. ISO / WIM extraction -------------------------------------------------
+if ($Minimal -and $IsoPath) {
+    Write-BuildLog 'Ignoring -IsoPath because -Minimal was specified (smoke-test drive carries no Windows image).' 'WARN'
+    $IsoPath = $null
+}
+
 if ($IsoPath) {
     if (-not (Test-Path $IsoPath)) {
         throw "IsoPath '$IsoPath' not found."
@@ -199,4 +214,46 @@ if ($IsoPath) {
     Write-BuildLog "No -IsoPath supplied - DISM /RestoreHealth will have no local source on the target machine. See docs/iso-role.md." 'WARN'
 }
 
-Write-BuildLog "Build complete at $UsbRoot. Run docs/verification-checklist.md before deploying this kit to a real repair."
+# --- 6. Build gate: prove the copied binary actually runs from the USB path ---
+# This is the cheapest possible check of the kit's load-bearing assumption. It
+# runs on the BUILD machine (which has Claude installed), so a pass here is
+# necessary but NOT sufficient — the real test is a machine that never had
+# Claude. It still catches a broken copy immediately instead of at the bedside.
+Write-BuildLog 'Build gate: launching claude.exe from the USB path...'
+$usbClaude = Join-Path $destClaudeDir 'claude.exe'
+try {
+    $ver = & $usbClaude --version 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or -not $ver.Trim()) {
+        throw "claude.exe from $usbClaude produced no version output (exit $LASTEXITCODE)."
+    }
+    Write-BuildLog "Build gate PASSED: $($ver.Trim())"
+} catch {
+    throw "BUILD GATE FAILED: the copied claude.exe does not run from '$usbClaude'. $_`nThis is the kit's load-bearing assumption. Do not ship this drive; see docs/verification-checklist.md step 2."
+}
+
+Write-Host ''
+if ($Minimal) {
+    Write-Host '  SMOKE-TEST DRIVE BUILT' -ForegroundColor Green
+    Write-Host '  ----------------------'
+    Write-Host "  Location: $UsbRoot   (no tools, no Windows image - that's intentional)"
+    Write-Host ''
+    Write-Host '  Do this NEXT, before building the full drive:'
+    Write-Host '    1. Put this drive in a Windows machine that has NEVER had Claude Code installed.'
+    Write-Host '       A disposable VM is ideal.'
+    Write-Host '    2. Work through steps 1-6 of docs\verification-checklist.md on that machine.'
+    Write-Host '    3. Only if those pass, come back and run the full build:'
+    Write-Host "         .\scripts\Build-Kit.ps1 -UsbRoot $UsbRoot -IsoPath <path to Windows ISO>"
+    Write-Host ''
+    Write-Host '  Why: everything else in this kit rests on the copied claude.exe running and'
+    Write-Host '  authenticating from a USB path on a machine that never had it. Prove that for'
+    Write-Host '  ~300MB before spending 8GB on tools and an ISO.' -ForegroundColor Yellow
+} else {
+    Write-Host '  FULL DRIVE BUILT' -ForegroundColor Green
+    Write-Host "  Location: $UsbRoot"
+    Write-Host ''
+    Write-Host '  Before using it on a machine you care about:'
+    Write-Host '    - Work through docs\verification-checklist.md (all 10 steps).'
+    Write-Host '    - Rebuild before each repair trip: MSERT expires ~10 days after download.'
+    Write-Host '    - If your drive has a write-protect switch, set it to read-only now.'
+}
+Write-Host ''

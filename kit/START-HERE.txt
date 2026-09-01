@@ -1,0 +1,51 @@
+===========================================================
+  PC REPAIR KIT
+===========================================================
+
+WHAT THIS IS
+  A repair assistant on a USB drive. It looks at this computer,
+  figures out what's wrong, and fixes what it safely can.
+
+
+HOW TO USE IT
+  1. Double-click            Repair-This-PC
+  2. Click YES on the permission prompt.
+     (If a blue "Windows protected your PC" box appears, click
+      "More info" then "Run anyway" - this is your own drive.)
+  3. Choose where to save a copy of this PC's files.
+     An external drive is best. You can skip this, but read the
+     warning it shows you first.
+  4. Walk away. It usually takes 20 to 90 minutes.
+     Leave the drive plugged in. Keep a laptop on its charger.
+  5. When it's done, you'll get a summary of what it found,
+     what it changed, and anything a person still needs to
+     look at.
+
+
+BEFORE YOU START
+  - This computer needs to be online. The assistant does its
+    thinking over the internet, so with no connection it will
+    stop and tell you, rather than half-fixing things.
+  - Nothing is deleted without a copy being kept first,
+    wherever that's possible.
+
+
+IF SOMETHING GOES WRONG
+  - To stop it: click the window and press Ctrl and C together.
+    Don't just close the window with the X.
+  - A complete record of everything it did is saved in the
+    "logs" folder on this drive.
+  - If it says it couldn't get online, the repair tools on this
+    drive still work by hand. The exact commands are in
+    docs\tool-invocations.md.
+
+
+WHAT IT WON'T DO
+  - It won't reinstall Windows or erase your disk.
+  - It won't remove your accounts or your files.
+  - Some fixes need a restart. It won't restart the computer
+    on its own - it will tell you a restart is needed instead.
+  - If it finds a failing hard drive or bad memory, it stops
+    and tells you, because those need a person and new parts.
+
+===========================================================

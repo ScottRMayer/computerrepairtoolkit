@@ -53,7 +53,16 @@ param(
     [string]$BackupUserName = $env:USERNAME,
     [switch]$AllProfiles,
 
-    [string]$PlaybookPrompt = 'Diagnose and repair this Windows machine. Follow the pipeline and tool whitelist in CLAUDE.md exactly. Read state\session-context.json first to learn what the launcher already did.'
+    [string]$PlaybookPrompt = 'Diagnose and repair this Windows machine. Follow the pipeline and tool whitelist in CLAUDE.md exactly. Read state\session-context.json first to learn what the launcher already did.',
+
+    # Wi-Fi credentials for a target machine with no saved profile. The agent's
+    # brain needs the network before it can think, so this is a launcher input.
+    [string]$WifiSSID,
+    [string]$WifiPassword,
+
+    # Pinned so an unattended run's reasoning quality can't drift with defaults.
+    [string]$Model = 'claude-opus-5',
+    [string]$FallbackModel = 'claude-sonnet-5'
 )
 
 $KitRoot = $PSScriptRoot
@@ -136,7 +145,26 @@ if ($BackupMode -eq 'Skip') {
     }
 }
 
-# --- Credentials ---
+# --- Scrub the inherited environment BEFORE loading our own credential ---
+# Two distinct hazards, both from a host we don't trust:
+#  1. An inherited ANTHROPIC_API_KEY outranks CLAUDE_CODE_OAUTH_TOKEN in Claude
+#     Code's credential precedence, so a leftover key on the target machine
+#     would silently shadow the owner's subscription token and misroute billing.
+#  2. TLS-weakening variables let a compromised host MITM the agent's uplink —
+#     the one channel none of our on-disk guardrails can see. Strip them.
+foreach ($risky in @(
+    'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
+    'NODE_EXTRA_CA_CERTS', 'NODE_TLS_REJECT_UNAUTHORIZED', 'NODE_OPTIONS',
+    'SSL_CERT_FILE', 'SSL_CERT_DIR', 'REQUESTS_CA_BUNDLE',
+    'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY'
+)) {
+    if (Test-Path "Env:$risky") {
+        Write-KitLog -LogPath $LogPath -Level WARN -Message "Scrubbed inherited '$risky' from the child environment before launching the agent."
+        Remove-Item "Env:$risky" -ErrorAction SilentlyContinue
+    }
+}
+
+# --- Credentials (loaded AFTER the scrub, so auth.env wins) ---
 $authLoaded = Import-KitAuthEnv -KitRoot $KitRoot
 if (-not $authLoaded -or (-not $env:CLAUDE_CODE_OAUTH_TOKEN -and -not $env:ANTHROPIC_API_KEY)) {
     Write-KitLog -LogPath $LogPath -Level ERROR -Message 'No CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY available (config\auth.env missing or empty). See docs/authentication.md. Aborting.'
@@ -168,6 +196,34 @@ $contextPath = Join-Path $KitRoot 'state\session-context.json'
 $sessionContext | ConvertTo-Json -Depth 5 | Out-File -FilePath $contextPath -Encoding UTF8
 Write-KitLog -LogPath $LogPath -Message "Session context written to $contextPath"
 
+# --- Connectivity gate ---
+# The agent's brain is a cloud API call, so this must succeed BEFORE handoff.
+# Launching an agent that can't reach the model produces nothing but a
+# confusing failure on turn 0.
+$net = & (Join-Path $KitRoot 'scripts\04-Ensure-Connectivity.ps1') `
+    -WifiSSID $WifiSSID -WifiPassword $WifiPassword
+
+foreach ($f in $net.Findings) { Write-KitLog -LogPath $LogPath -Message "Connectivity finding: $f" }
+
+if (-not $net.Online) {
+    Write-KitLog -LogPath $LogPath -Level ERROR -Message @"
+NO PATH TO api.anthropic.com — the repair agent cannot run.
+
+Claude Code is a cloud service: the tools on this drive work offline, but the
+agent that drives them does not. Tried: $($net.Attempted -join ', ').
+
+What still happened: your backup and this log. What did NOT happen: any
+diagnosis or repair.
+
+You can still use the bundled tools by hand — exact commands are in
+docs\tool-invocations.md on this drive.
+"@
+    & (Join-Path $KitRoot 'scripts\03-Set-DefenderExclusions.ps1') -Remove
+    # Distinct exit code so "couldn't start" is never mistaken for "nothing to fix".
+    exit 3
+}
+Write-KitLog -LogPath $LogPath -Message "Connectivity confirmed (rung: $($net.Rung))."
+
 # --- Defender exclusions (best-effort; removed again in the finally below) ---
 & (Join-Path $KitRoot 'scripts\03-Set-DefenderExclusions.ps1')
 
@@ -181,8 +237,14 @@ Write-KitLog -LogPath $LogPath -Message "Prompt: $PlaybookPrompt"
 $exitCode = 1
 Push-Location $KitRoot
 try {
+    # Model is pinned rather than left to default: an unattended repair run
+    # should not silently change reasoning quality because a default moved.
+    # --fallback-model keeps the session alive through a capacity blip instead
+    # of dying mid-repair on a machine nobody is watching.
     & $claudeExe -p $PlaybookPrompt `
         --dangerously-skip-permissions `
+        --model $Model `
+        --fallback-model $FallbackModel `
         --output-format stream-json `
         --verbose 2>&1 |
         Tee-Object -FilePath $runLogPath

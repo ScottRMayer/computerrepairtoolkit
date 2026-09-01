@@ -13,6 +13,7 @@
       "PowerShell(*Clear-Disk*)",
       "PowerShell(*Initialize-Disk*)",
       "PowerShell(*Remove-Partition*)",
+      "PowerShell(*Set-Partition*IsActive*)",
 
       "PowerShell(*vssadmin*delete*)",
       "PowerShell(*wbadmin*delete*)",
@@ -36,21 +37,39 @@
       "PowerShell(*Remove-Item*$env:SystemRoot*)",
       "PowerShell(*Remove-Item*C:\\ *)",
 
+      "Bash(*Format-Volume*)",
       "Bash(format *)",
       "Bash(*format.com*)",
       "Bash(*/c format *)",
+      "Bash(*/k format *)",
       "Bash(*-MethodName Format*)",
+      "Bash(*Win32_Volume*Format*)",
       "Bash(*diskpart*)",
+      "Bash(*Clear-Disk*)",
+      "Bash(*Initialize-Disk*)",
+      "Bash(*Remove-Partition*)",
+      "Bash(*Set-Partition*IsActive*)",
+
       "Bash(*vssadmin*delete*)",
       "Bash(*wbadmin*delete*)",
+      "Bash(*Disable-ComputerRestore*)",
       "Bash(*cipher*/w*)",
+
       "Bash(*manage-bde*-forcerecovery*)",
       "Bash(*manage-bde*-off*)",
+      "Bash(*Disable-BitLocker*)",
       "Bash(*sdelete*)",
+      "Bash(*Remove-LocalUser*)",
       "Bash(*net user*/delete*)",
+
       "Bash(*reg delete HKLM /f*)",
       "Bash(*reg delete HKLM\\SYSTEM /f*)",
       "Bash(*reg delete HKLM\\SOFTWARE /f*)",
+      "Bash(*Remove-Item*HKLM:\\*)",
+
+      "Bash(*Remove-Item*C:\\Windows*)",
+      "Bash(*Remove-Item*C:\\Program Files*)",
+      "Bash(*Remove-Item*$env:SystemRoot*)",
       "Bash(*rm -rf /c/Windows*)",
       "Bash(*rm -rf C:/Windows*)",
 
