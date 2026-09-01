@@ -45,7 +45,15 @@ param(
     # the USB separately with its own installer BEFORE this build — see
     # docs/offline-repair-playbook.md. This only copies ISOs into place and
     # checksums them.
-    [string[]]$RecoveryIso
+    [string[]]$RecoveryIso,
+
+    # Folder where you've downloaded the bundled tools from their vendor pages
+    # (see GET-TOOLS.md). Build-Kit ingests each tool from here by filename
+    # pattern — copying or extracting it onto the drive and recording its
+    # SHA-256 — which sidesteps the unstable/redirecting vendor download URLs.
+    # Tools with a stable direct URL in the manifest are still fetched
+    # automatically; staging takes precedence when a matching file is present.
+    [string]$StagingDir
 )
 
 if ($Minimal) { $SkipToolFetch = $true }
@@ -156,27 +164,58 @@ if ($SkipToolFetch) {
 } else {
     $manifestPath = Join-Path $PSScriptRoot 'tool-manifest.json'
     $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+    $staged = 0; $fetched = 0; $skipped = 0
 
     foreach ($tool in $manifest.tools) {
-        if (-not $tool.url -or -not $tool.sha256) {
-            Write-BuildLog "Skipping '$($tool.name)': url or sha256 not yet populated in tool-manifest.json. See docs/status.md." 'WARN'
+        $destDir = Join-Path $UsbRoot $tool.destination
+
+        # Place a source artifact (a downloaded file/folder) into $destDir,
+        # extracting a .zip or copying anything else, and log its SHA-256.
+        function Publish-Artifact([string]$src, [string]$name) {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+            if ((Get-Item $src).PSIsContainer) {
+                Copy-Item -Path (Join-Path $src '*') -Destination $destDir -Recurse -Force
+                Write-BuildLog "  staged folder '$name' -> $($tool.destination)"
+            } elseif ($src -like '*.zip') {
+                Expand-Archive -Path $src -DestinationPath $destDir -Force
+                Write-BuildLog "  extracted '$name' -> $($tool.destination) (SHA256 $((Get-FileHash $src -Algorithm SHA256).Hash))"
+            } else {
+                Copy-Item -Path $src -Destination $destDir -Force
+                Write-BuildLog "  copied '$name' -> $($tool.destination) (SHA256 $((Get-FileHash $src -Algorithm SHA256).Hash))"
+            }
+        }
+
+        # 1) Prefer a staged download (robust against dead vendor URLs).
+        $stagedHit = $null
+        if ($StagingDir -and $tool.staging_glob -and (Test-Path $StagingDir)) {
+            $stagedHit = Get-ChildItem -Path $StagingDir -Filter $tool.staging_glob -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        }
+        if ($stagedHit) {
+            Write-BuildLog "Staging '$($tool.name)' from $($stagedHit.Name)"
+            Publish-Artifact $stagedHit.FullName $stagedHit.Name
+            $staged++
             continue
         }
 
-        # "unpinned" is a deliberate, documented exception for tools whose
-        # binary legitimately changes every build — MSERT bundles its own
-        # signatures and expires ~10 days after download, so a pinned hash
-        # would be wrong by design. Requires a stated reason so this can't
-        # become a casual way around checksum verification.
+        # 2) Otherwise fetch from a stable URL if one is pinned (or unpinned).
+        if (-not $tool.url -or -not $tool.sha256) {
+            Write-BuildLog "Skipping '$($tool.name)': not found in staging and no pinned url/sha256. Download it per GET-TOOLS.md into -StagingDir." 'WARN'
+            $skipped++
+            continue
+        }
+
+        # "unpinned" is a deliberate, documented exception for a binary that
+        # legitimately changes every build (e.g. MSERT bundles its own
+        # signatures and expires ~10 days out). Requires a stated reason so it
+        # can't become a casual way around checksum verification.
         $unpinned = ($tool.sha256 -eq 'unpinned')
         if ($unpinned -and -not $tool._unpinned_reason) {
             throw "Tool '$($tool.name)' is marked unpinned but has no _unpinned_reason. Refusing to fetch an unverified binary without a documented justification."
         }
 
-        $destDir = Join-Path $UsbRoot $tool.destination
         New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-        $downloadPath = Join-Path $env:TEMP "$($tool.name)-download"
-
+        $downloadPath = Join-Path $env:TEMP "$($tool.name)-download$(if($tool.url -like '*.zip'){'.zip'})"
         Write-BuildLog "Downloading $($tool.name) from $($tool.url)"
         Invoke-WebRequest -Uri $tool.url -OutFile $downloadPath -UseBasicParsing
 
@@ -190,14 +229,11 @@ if ($SkipToolFetch) {
         } else {
             Write-BuildLog "Checksum verified for $($tool.name)."
         }
-
-        if ($downloadPath -like '*.zip') {
-            Expand-Archive -Path $downloadPath -DestinationPath $destDir -Force
-        } else {
-            Copy-Item -Path $downloadPath -Destination $destDir -Force
-        }
+        Publish-Artifact $downloadPath $tool.name
         Remove-Item $downloadPath -Force
+        $fetched++
     }
+    Write-BuildLog "Tools: $staged staged, $fetched fetched, $skipped skipped."
 
     # Sysinternals ships as one suite archive, so tools excluded from the
     # whitelist arrive whether we want them or not. Delete them rather than

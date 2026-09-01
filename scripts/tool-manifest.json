@@ -1,93 +1,110 @@
 {
-  "_comment": "Populate this after downloading each whitelisted tool once from its vendor site, per docs/usb-layout.md#fetching-and-checksumming-tools and docs/tool-whitelist.md. Build-Kit.ps1 refuses to place a binary on the USB whose SHA-256 doesn't match the value recorded here. Empty/placeholder entries are skipped with a warning, not silently trusted — see docs/status.md.",
+  "_comment": "Bundled-tool sources. Two ways a tool lands on the drive: (1) STAGING - you download it once from the vendor page into a folder and pass -StagingDir; Build-Kit finds it by staging_glob, copies/extracts it, and logs its SHA-256. This is the robust path because most of these vendors don't publish stable URLs. (2) URL - for the few with a stable direct link, Build-Kit fetches automatically. Staging wins when both are available. See GET-TOOLS.md for exactly what to download and where each file goes.",
   "tools": [
     {
       "name": "sysinternals-suite",
+      "staging_glob": "SysinternalsSuite*.zip",
       "url": "https://download.sysinternals.com/files/SysinternalsSuite.zip",
       "sha256": "",
-      "destination": "tools\\sysinternals"
+      "destination": "tools\\sysinternals",
+      "_note": "Stable URL, so this one auto-fetches even without staging. sdelete*.exe is removed post-extract (not whitelisted)."
     },
     {
       "name": "microsoft-safety-scanner",
+      "staging_glob": "msert*.exe",
       "url": "https://go.microsoft.com/fwlink/?LinkId=212732",
       "sha256": "unpinned",
       "_unpinned_reason": "MSERT bundles its own malware signatures and expires ~10 days after download, so the binary legitimately differs on every build and a pinned hash would always be stale. Build-Kit logs the actual SHA-256 of the copy it ships.",
       "destination": "tools\\msert",
-      "_note": "64-bit MSERT. Verify the fwlink still resolves to msert.exe at build time. An expired binary reports as expired rather than clean - see docs/tool-invocations.md."
+      "_note": "64-bit MSERT. Auto-fetches via the fwlink; stage a msert.exe to override."
     },
     {
       "name": "adwcleaner",
+      "staging_glob": "adwcleaner*.exe",
       "url": "",
       "sha256": "",
       "destination": "tools\\adwcleaner",
-      "_note": "Malwarebytes distributes a fresh download link per release rather than a stable URL - resolve at build time."
+      "_note": "Stage the single adwcleaner.exe from malwarebytes.com/adwcleaner."
     },
     {
       "name": "emsisoft-emergency-kit",
+      "staging_glob": "emsisoft",
       "url": "",
       "sha256": "",
-      "destination": "tools\\emsisoft"
+      "destination": "tools\\emsisoft",
+      "_note": "EEK self-extracts to a folder (default C:\\EEK) containing Run\\a2cmd.exe. Extract once, then place that whole EEK folder in staging named 'emsisoft' (a folder). GET-TOOLS.md has the steps."
     },
     {
       "name": "bleachbit-portable",
+      "staging_glob": "BleachBit*portable*.zip",
       "url": "",
       "sha256": "",
-      "destination": "tools\\bleachbit"
+      "destination": "tools\\bleachbit",
+      "_note": "The 'portable' zip from bleachbit.org/download (has bleachbit_console.exe)."
     },
     {
       "name": "wiztree-portable",
+      "staging_glob": "wiztree*.zip",
       "url": "",
       "sha256": "",
-      "destination": "tools\\wiztree"
+      "destination": "tools\\wiztree",
+      "_note": "The portable zip from diskanalyzer.com (has WizTree64.exe)."
     },
     {
       "name": "smartmontools",
+      "staging_glob": "smartctl*.exe",
       "url": "",
       "sha256": "",
       "destination": "tools\\smartmontools",
-      "_note": "No official portable build - extract smartctl.exe from the NSIS installer at build time, see docs/usb-layout.md."
+      "_note": "No official portable build. Install smartmontools once on the build machine (or 7-Zip-extract its installer) and place the resulting smartctl.exe (and any DLLs beside it) in staging. GET-TOOLS.md has the steps."
     },
     {
       "name": "speedtest-cli",
-      "url": "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-win64.zip",
+      "staging_glob": "*speedtest*win64*.zip",
+      "url": "",
       "sha256": "",
       "destination": "tools\\speedtest",
-      "_note": "Pin the actual current version - this URL is illustrative, verify against Ookla's published download page at build time."
+      "_note": "Ookla's URL is version-specific and changes; stage the current win64 zip from speedtest.net/apps/cli rather than pinning a URL that rots."
     },
     {
-      "name": "nirsoft-suite",
+      "name": "nirsoft-bluescreenview",
+      "staging_glob": "bluescreenview*.zip",
       "url": "",
       "sha256": "",
       "destination": "tools\\nirsoft",
-      "_note": "NirSoft ships each utility as a separate download - assemble the subset actually referenced by CLAUDE.md (BlueScreenView etc.) rather than the entire catalog."
+      "_note": "Just BlueScreenView from nirsoft.net (the one CLAUDE.md references). Add other NirSoft zips to staging with matching globs if you extend the whitelist."
     },
     {
       "name": "snappy-driver-installer-origin",
+      "staging_glob": "SDIO*.zip",
       "url": "",
       "sha256": "",
       "destination": "tools\\sdio",
-      "_note": "OSS driver matcher/installer, offline + scriptable (sdio.exe -script:). Added per docs/ecosystem-catalog.md. Bundle the NETWORK-ONLY driverpack (~hundreds of MB) to bootstrap connectivity; full packs are tens of GB. Official mirror: glenn.delahoy.com/snappy-driver-installer-origin. Verify checksum at build time."
+      "_note": "From glenn.delahoy.com/snappy-driver-installer-origin. Stage the SDIO zip; add the NETWORK driverpack (drivers\\DP_*LAN*/*WLAN*) into staging\\SDIO too if you want offline NIC recovery (full packs are tens of GB - network-only is a few hundred MB)."
     },
     {
       "name": "windows-debugging-tools-cdb",
+      "staging_glob": "windbg",
       "url": "",
       "sha256": "",
       "destination": "tools\\windbg",
-      "_note": "cdb.exe (console WinDbg engine) for headless crash-dump root-cause: cdb.exe -z <dmp> -c \"!analyze -v;q\". Ships inside the Windows SDK 'Debugging Tools for Windows' feature (Microsoft, free). Extract the standalone Debugging Tools payload; bundle a symbol cache or use SRV* at build time. See docs/ecosystem-catalog.md."
+      "_note": "cdb.exe + its DLLs from the Windows SDK 'Debugging Tools for Windows'. Install that SDK feature once, copy the x64 Debugging Tools folder, and place it in staging named 'windbg' (a folder). Optional / heaviest - skip for a first full build."
     },
     {
       "name": "win11debloat",
+      "staging_glob": "Win11Debloat*.zip",
       "url": "",
       "sha256": "",
       "destination": "tools\\win11debloat",
-      "_note": "Raphire/Win11Debloat, MIT, pure PowerShell, reversible (Group Policy keys, not deletes). Silent: -Silent -RunDefaults -CreateRestorePoint. Ship a vetted config; always pair with the restore point. github.com/Raphire/Win11Debloat - pin a release tag + checksum."
+      "_note": "Source-code zip of a pinned release from github.com/Raphire/Win11Debloat/releases."
     },
     {
       "name": "oo-shutup10",
+      "staging_glob": "OOSU10*.exe",
       "url": "",
       "sha256": "",
       "destination": "tools\\oosu10",
-      "_note": "O&O ShutUp10++, freeware portable single EXE. Silent: OOSU10.exe <profile>.cfg /quiet. Curate the .cfg to O&O 'recommended (green)' so a family PC isn't over-hardened. Closed-source, apply-once (not a persistence agent). oo-software.com/en/shutup10."
+      "_note": "Single OOSU10.exe from oo-software.com/en/shutup10. Add your curated 'recommended.cfg' to staging too if you want a default profile shipped."
     }
   ]
 }
