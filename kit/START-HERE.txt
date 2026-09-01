@@ -17,6 +17,12 @@ HOW TO USE IT
      warning it shows you first.
   4. Walk away. It usually takes 20 to 90 minutes.
      Leave the drive plugged in. Keep a laptop on its charger.
+
+  Not sure yet? For a safe first run that only LOOKS and changes nothing,
+  right-click Repair-This-PC, and if offered "Run as administrator" say yes,
+  or run it from a PowerShell window as:
+        .\Start-Repair.ps1 -RepairMode Check
+  It will tell you what it WOULD fix, without touching anything.
   5. When it's done, you'll get a summary of what it found,
      what it changed, and anything a person still needs to
      look at.

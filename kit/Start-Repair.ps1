@@ -68,7 +68,13 @@ param(
     # --max-turns is the reliable primary guard; the wall-clock cap is the
     # backstop for a turn that hangs on I/O.
     [int]$MaxTurns = 120,
-    [int]$MaxMinutes = 90
+    [int]$MaxMinutes = 90,
+
+    # Check = diagnose only, change nothing, report what it WOULD do (the safe
+    # first run). Fix = full autonomous repair (default). The agent reads this
+    # from session-context.json and CLAUDE.md enforces the posture.
+    [ValidateSet('Check', 'Fix')]
+    [string]$RepairMode = 'Fix'
 )
 
 $KitRoot = $PSScriptRoot
@@ -197,6 +203,7 @@ $sessionContext = [ordered]@{
     elevated     = $isElevated
     backup       = $backupResult
     target_user  = $BackupUserName
+    repair_mode  = $RepairMode
 }
 $contextPath = Join-Path $KitRoot 'state\session-context.json'
 $sessionContext | ConvertTo-Json -Depth 5 | Out-File -FilePath $contextPath -Encoding UTF8

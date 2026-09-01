@@ -96,6 +96,14 @@ Safe Mode service allowlist). Instead run the same script with
 and copies any config files you're about to modify, as a substitute you can
 actually restore from by hand.
 
+### 2b. Check the repair mode
+
+`session-context.json` has `repair_mode`. If it is **`Check`**, you are in a
+dry run: run every *detect* step, diagnose fully, and write a report of what
+you *would* change and why — but **make no changes** (no fixes, no removals, no
+config edits). The backup and restore point may already have been taken; that's
+fine. If it is **`Fix`** (the default), proceed with the full repair.
+
 ### 3. System inventory
 
 Run `scripts\02-Get-SystemInventory.ps1`. It writes a JSON snapshot (OS
@@ -105,6 +113,18 @@ diagnosing — it's cheaper and more reliable than re-deriving the same facts
 tool-by-tool. **Use `Get-CimInstance`, never `wmic`** — WMIC was removed
 from Windows 11 24H2/25H2 as of KB5120998 (2026-08-14) and will not be
 present on any target machine you're likely to see.
+
+### 4. Diagnose by symptom — use the playbook
+
+You are handed a complaint, not a tool. `docs\repair-playbook.md` on this USB
+maps each real family-PC complaint (slow, malware, broken Windows Update, no
+boot, disk errors, drivers, Start menu/Store, network, crashes/BSOD,
+printer/audio/webcam, bad profile, bloatware) to: symptom → cheapest safe
+detection → reversible fix → when to STOP and name hardware. Two gates run
+before any deep repair: a malware-indicator sweep (malware re-breaks every
+other fix) and a disk-health check (`smartctl -H` — never write-repair a dying
+drive). Follow that ladder; it encodes the reversible-first and
+hardware-tripwire rules you must obey.
 
 ## Tool whitelist — the only tools you may run
 
