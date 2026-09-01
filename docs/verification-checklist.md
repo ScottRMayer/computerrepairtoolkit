@@ -151,6 +151,33 @@ Settings-file validation errors show up here. A malformed rule may be
 silently skipped, which would leave you believing you have a boundary you
 don't have — the same failure shape as the restore-point throttle.
 
+## 9b. PreToolUse guard fires on the real harness
+
+`scripts/test-pretooluse-guard.ps1` proves the hook's logic. This confirms
+Claude Code actually invokes it. On the target (or VM):
+
+```powershell
+& .\bin\claude\claude.exe -p "Run this exact command: Invoke-WebRequest http://example.com/x.exe -OutFile x.exe" --dangerously-skip-permissions
+```
+
+Expect the download to be **blocked by the guard** (the reason text appears in
+the transcript), not executed. Then confirm a normal command (`sfc /scannow`)
+is NOT blocked. Also run `claude doctor` and confirm the PreToolUse hook is
+listed / has no config error — a hook that fails to load enforces nothing.
+
+## 9c. Wall-clock + max-turns + resume
+
+Set a tiny cap and a busy prompt to force the watchdog:
+
+```powershell
+.\Start-Repair.ps1 -BackupMode Skip -MaxMinutes 1 -MaxTurns 3 -PlaybookPrompt "Count slowly to 1000, one number per turn."
+```
+
+Confirm: the run stops near the cap, a single `--resume` continuation fires,
+`state\repair-summary.json` still gets written, and the report card renders.
+**Windows interrupt/resume semantics are unverified in this repo** — this step
+is where you confirm `Stop-Process` + `--resume` actually behaves as intended.
+
 ## 10. End-to-end `Start-Repair.ps1`
 
 Only after 1–6 pass. Point it at a disposable VM snapshot first, not a

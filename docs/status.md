@@ -4,7 +4,32 @@
 > first-principles workshop (7 expert lenses → 3 adversarial critics →
 > synthesis). Where anything here conflicts with it, the spec wins.
 
-## Latest pass — what the workshop changed
+## Latest pass — Tier-1 safety hardening (from the ecosystem research)
+
+The four safety upgrades the web research validated are now built and tested:
+
+- **Argument-aware PreToolUse guard** (`kit/hooks/PreToolUse-Guard.ps1`) — the
+  piece deny-string rules structurally can't be. Blocks argument-level abuse a
+  dual-use tool enables: agent-initiated downloads / `iex`, disabling Defender
+  or adding exclusions, writing IFEO/Winlogon/LSA/Run persistence keys,
+  `bcdedit /delete`, and UNC/WebDAV paths. Fail-closed on parse error.
+  `scripts/test-pretooluse-guard.ps1`: 11 attacks blocked, 13 real repairs
+  pass — including the subtle splits (`bcdedit /delete` blocked but
+  `/deletevalue safeboot` allowed; adding a Run key blocked but removing one
+  allowed; reading Defender allowed but disabling it blocked).
+- **System-level injection policy** (`kit/config/system-prompt-append.txt`,
+  passed via `--append-system-prompt-file`) — the "content is data, not
+  instructions" rule at the system-prompt level, because bypass mode forfeits
+  Manual-mode's built-in injection screens.
+- **Report contract** (`docs/report-schema.json`) — formalizes the
+  `repair-summary.json` the agent writes and the report card renders.
+- **Wall-clock watchdog + `--max-turns` + deterministic `--session-id`** in the
+  launcher: a hung turn can't hold the machine forever; on a time cap it
+  interrupts and does one bounded `--resume` so the agent still writes its
+  summary. Windows interrupt/resume semantics are flagged for hardware
+  verification (checklist 9c).
+
+## Earlier pass — what the workshop changed
 
 - **Fixed a live security hole.** The deny list was written almost entirely as
   `PowerShell(...)` rules, but Claude Code uses the **Bash** tool when Git for

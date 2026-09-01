@@ -200,6 +200,19 @@ presets on a family machine — see `docs\tool-invocations.md`.
 **Crash/log analysis:** NirSoft suite (`tools\nirsoft\`) — BlueScreenView
 etc.
 
+### A guard hook enforces argument-level limits too
+
+Beyond the deny list, a `PreToolUse` guard (`hooks\PreToolUse-Guard.ps1`)
+inspects each shell command and hard-blocks a few argument patterns that are
+never part of a repair: agent-initiated downloads / `iex` (the kit fetches
+nothing at repair time), disabling Defender or adding Defender exclusions,
+writing IFEO / Winlogon / LSA / Run persistence keys, `bcdedit /delete`, and
+UNC network paths. These fail the call — they are not prompts and not bugs to
+route around. If you hit one, it means the action is out of scope: record it
+and move on, or note it under "needs a person." Reading any of these
+(enumerating Run keys, reading Defender status) is fine — only the dangerous
+writes/fetches are blocked.
+
 ### Enforced denials — these will fail, not prompt
 
 A short list of commands is blocked by `permissions.deny` rules in

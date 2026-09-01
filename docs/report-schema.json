@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "repair-summary.json — the agent's end-of-run report contract",
+  "description": "The agent writes state\\repair-summary.json as its final action (see kit/CLAUDE.md). kit/scripts/Write-RepairReport.ps1 renders it into the operator's HTML report card. This file is the contract of record. The report generator degrades gracefully if the file is missing or fields are absent, but a conforming file produces the best report.",
+  "type": "object",
+  "required": ["outcome", "headline"],
+  "additionalProperties": true,
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": ["fixed", "partial", "needs_person", "nothing_found"],
+      "description": "fixed = repairs done and complete; partial = a reboot or second run is needed to finish; needs_person = hit the hardware tripwire or a blocked/deny-listed action requires a human; nothing_found = the machine was healthy."
+    },
+    "headline": {
+      "type": "string",
+      "description": "One plain sentence a non-technical person understands."
+    },
+    "what_i_found": { "type": "array", "items": { "type": "string" } },
+    "what_i_changed": { "type": "array", "items": { "type": "string" }, "description": "Each change, specific enough to undo by hand." },
+    "needs_a_person": { "type": "array", "items": { "type": "string" }, "description": "New hardware, a reboot, a decision, or anything the agent was blocked from doing." },
+    "reboot_required": { "type": "boolean" },
+    "restore_point": { "type": ["string", "null"], "description": "Restore-point name if one was created, else null." },
+    "backup_path": { "type": ["string", "null"], "description": "Backup destination from session-context.json, or null if none." }
+  }
+}

@@ -62,7 +62,13 @@ param(
 
     # Pinned so an unattended run's reasoning quality can't drift with defaults.
     [string]$Model = 'claude-opus-5',
-    [string]$FallbackModel = 'claude-sonnet-5'
+    [string]$FallbackModel = 'claude-sonnet-5',
+
+    # Loop and wall-clock guards for an unattended run nobody is watching.
+    # --max-turns is the reliable primary guard; the wall-clock cap is the
+    # backstop for a turn that hangs on I/O.
+    [int]$MaxTurns = 120,
+    [int]$MaxMinutes = 90
 )
 
 $KitRoot = $PSScriptRoot
@@ -236,22 +242,57 @@ $runLogPath = Join-Path $KitRoot "logs\claude-run-$(Get-Date -Format 'yyyyMMdd-H
 Write-KitLog -LogPath $LogPath -Message "Launching Claude Code. Transcript: $runLogPath"
 Write-KitLog -LogPath $LogPath -Message "Prompt: $PlaybookPrompt"
 
+# A deterministic session id lets us --resume the exact session if the
+# wall-clock watchdog has to interrupt it (e.g. to let it write its summary).
+$SessionId = [guid]::NewGuid().ToString()
+$sysPromptFile = Join-Path $KitRoot 'config\system-prompt-append.txt'
+
+# Shared argument set. --append-system-prompt-file injects the untrusted-content
+# policy at the SYSTEM-PROMPT level (stronger than CLAUDE.md, and necessary
+# because bypass mode forfeits Manual-mode's built-in injection screens).
+$claudeArgs = @(
+    '-p', $PlaybookPrompt,
+    '--dangerously-skip-permissions',
+    '--model', $Model,
+    '--fallback-model', $FallbackModel,
+    '--max-turns', "$MaxTurns",
+    '--session-id', $SessionId,
+    '--output-format', 'stream-json',
+    '--verbose'
+)
+if (Test-Path $sysPromptFile) {
+    $claudeArgs += @('--append-system-prompt-file', $sysPromptFile)
+} else {
+    Write-KitLog -LogPath $LogPath -Level WARN -Message "system-prompt-append.txt missing — running without the system-level injection policy."
+}
+
 $exitCode = 1
 Push-Location $KitRoot
 try {
-    # Model is pinned rather than left to default: an unattended repair run
-    # should not silently change reasoning quality because a default moved.
-    # --fallback-model keeps the session alive through a capacity blip instead
-    # of dying mid-repair on a machine nobody is watching.
-    & $claudeExe -p $PlaybookPrompt `
-        --dangerously-skip-permissions `
-        --model $Model `
-        --fallback-model $FallbackModel `
-        --output-format stream-json `
-        --verbose 2>&1 |
-        Tee-Object -FilePath $runLogPath
+    # Run as a monitored child so a hung turn can't hold the machine forever.
+    # NOTE: Windows has no SIGTERM; Stop-Process is the available control, and
+    # exact interrupt/resume semantics on Windows are unverified in this repo
+    # (authored without Windows hardware) — see docs/verification-checklist.md.
+    $proc = Start-Process -FilePath $claudeExe -ArgumentList $claudeArgs `
+        -NoNewWindow -PassThru `
+        -RedirectStandardOutput $runLogPath `
+        -RedirectStandardError "$runLogPath.err"
 
-    $exitCode = $LASTEXITCODE
+    if (-not $proc.WaitForExit($MaxMinutes * 60 * 1000)) {
+        Write-KitLog -LogPath $LogPath -Level WARN -Message "Agent exceeded the $MaxMinutes-minute wall-clock cap. Interrupting, then resuming once to let it finish and write its summary."
+        try { $proc.CloseMainWindow() | Out-Null } catch { }
+        Start-Sleep -Seconds 5
+        if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+
+        # One bounded resume so the agent can wrap up + write repair-summary.json.
+        & $claudeExe --resume $SessionId -p 'You were interrupted at a time limit. Do not start new work. Finish only what is safely in progress, then write state\repair-summary.json as instructed and stop.' `
+            --dangerously-skip-permissions --model $FallbackModel --max-turns 8 `
+            --output-format stream-json --verbose 2>&1 |
+            Tee-Object -FilePath "$runLogPath.resume" | Out-Null
+        $exitCode = 2
+    } else {
+        $exitCode = $proc.ExitCode
+    }
 } finally {
     Pop-Location
 

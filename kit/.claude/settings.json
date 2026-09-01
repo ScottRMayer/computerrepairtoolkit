@@ -78,6 +78,19 @@
       "Edit(C:\\Program Files (x86)\\**)"
     ]
   },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PROJECT_DIR%\\hooks\\PreToolUse-Guard.ps1\""
+          }
+        ]
+      }
+    ]
+  },
   "env": {
     "DISABLE_AUTOUPDATER": "1",
     "DISABLE_ERROR_REPORTING": "1"
