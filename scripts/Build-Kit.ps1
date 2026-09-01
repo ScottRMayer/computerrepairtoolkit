@@ -178,6 +178,20 @@ if ($SkipToolFetch) {
                 Write-BuildLog "  staged folder '$name' -> $($tool.destination)"
             } elseif ($src -like '*.zip') {
                 Expand-Archive -Path $src -DestinationPath $destDir -Force
+                # Some portable zips wrap everything in a single versioned
+                # top-level folder (e.g. BleachBit-Portable\, Win11Debloat-<tag>\).
+                # Hoist it so the binary lands at tools\<name>\<binary> as the
+                # playbook and docs expect. Only fires when the archive has
+                # exactly one root entry and it's a directory; flat zips (WizTree,
+                # Speedtest, SDIO, NirSoft, Sysinternals) are left untouched.
+                $roots = @(Get-ChildItem -LiteralPath $destDir -Force)
+                if ($roots.Count -eq 1 -and $roots[0].PSIsContainer) {
+                    $wrapper = $roots[0]
+                    Get-ChildItem -LiteralPath $wrapper.FullName -Force |
+                        Move-Item -Destination $destDir -Force
+                    Remove-Item -LiteralPath $wrapper.FullName -Recurse -Force
+                    Write-BuildLog "  flattened wrapper folder '$($wrapper.Name)' in $($tool.destination)"
+                }
                 Write-BuildLog "  extracted '$name' -> $($tool.destination) (SHA256 $((Get-FileHash $src -Algorithm SHA256).Hash))"
             } else {
                 Copy-Item -Path $src -Destination $destDir -Force
@@ -215,9 +229,29 @@ if ($SkipToolFetch) {
         }
 
         New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-        $downloadPath = Join-Path $env:TEMP "$($tool.name)-download$(if($tool.url -like '*.zip'){'.zip'})"
+        # Pick a local filename that carries the right extension so Publish-Artifact
+        # can tell a .zip (extract) from a bare .exe (copy). Some vendor URLs have
+        # no usable extension (e.g. AdwCleaner's .../file/adwcleaner serves the name
+        # via Content-Disposition), so the manifest may set an explicit "filename".
+        $dlName = if ($tool.filename) { $tool.filename }
+                  elseif ($tool.url -like '*.zip') { "$($tool.name).zip" }
+                  else { $tool.name }
+        $downloadPath = Join-Path $env:TEMP $dlName
         Write-BuildLog "Downloading $($tool.name) from $($tool.url)"
-        Invoke-WebRequest -Uri $tool.url -OutFile $downloadPath -UseBasicParsing
+        # A browser UA matters: NirSoft (and some CDNs) reject empty/scripted
+        # agents. Follow redirects (Malwarebytes/WizTree bounce through a CDN).
+        try {
+            Invoke-WebRequest -Uri $tool.url -OutFile $downloadPath -UseBasicParsing `
+                -UserAgent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' -MaximumRedirection 5
+        } catch {
+            # A dead/rotated URL (version-pinned links 404 on the next release)
+            # must not abort the whole build - skip this tool and tell the
+            # operator to stage it instead.
+            Write-BuildLog "Skipping '$($tool.name)': download failed from $($tool.url) - $($_.Exception.Message). Stage it per GET-TOOLS.md into -StagingDir." 'WARN'
+            if (Test-Path $downloadPath) { Remove-Item $downloadPath -Force -ErrorAction SilentlyContinue }
+            $skipped++
+            continue
+        }
 
         $actualHash = (Get-FileHash -Path $downloadPath -Algorithm SHA256).Hash
         if ($unpinned) {

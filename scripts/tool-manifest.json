@@ -1,30 +1,34 @@
 {
-  "_comment": "Bundled-tool sources. Two ways a tool lands on the drive: (1) STAGING - you download it once from the vendor page into a folder and pass -StagingDir; Build-Kit finds it by staging_glob, copies/extracts it, and logs its SHA-256. This is the robust path because most of these vendors don't publish stable URLs. (2) URL - for the few with a stable direct link, Build-Kit fetches automatically. Staging wins when both are available. See GET-TOOLS.md for exactly what to download and where each file goes.",
+  "_comment": "Bundled-tool sources. Two ways a tool lands on the drive: (1) STAGING - you download it once from the vendor page into a folder and pass -StagingDir; Build-Kit finds it by staging_glob, copies/extracts it, and logs its SHA-256. (2) URL - Build-Kit fetches automatically (following redirects, sending a browser user-agent). Staging always wins when both are present, so staging remains the override for any URL that rots. Most tools now auto-fetch; three (smartmontools, emsisoft, windbg) are STAGING ONLY because their only download is an installer/SFX that needs extraction Build-Kit doesn't perform - their _note has the steps. Checksum rule: a VERSION-PINNED url (the version is in the path) carries a real pinned sha256 - when the vendor bumps the version the old url 404s and Build-Kit skips it gracefully, so the pin never causes a false mismatch abort; a ROLLING/unversioned url (or a non-byte-stable GitHub archive) uses sha256:'unpinned' with an _unpinned_reason, because the bytes change in place under a fixed url and a pin would hard-fail the build on the vendor's next refresh - Build-Kit logs the actual hash it shipped. An optional 'filename' names the local download when the url carries no usable extension (so a bare .exe is copied, not mistaken for an archive). See GET-TOOLS.md for the staging-only tools and version bumps.",
   "tools": [
     {
       "name": "sysinternals-suite",
       "staging_glob": "SysinternalsSuite*.zip",
       "url": "https://download.sysinternals.com/files/SysinternalsSuite.zip",
-      "sha256": "",
+      "sha256": "unpinned",
+      "_unpinned_reason": "Microsoft ships the whole Sysinternals Suite from one stable, unversioned URL and refreshes individual tools in place, so the archive's bytes change on any tool update and a pinned hash would abort the build on Microsoft's next refresh. Build-Kit logs the actual SHA-256 of the copy it ships.",
       "destination": "tools\\sysinternals",
-      "_note": "Stable URL, so this one auto-fetches even without staging. sdelete*.exe is removed post-extract (not whitelisted)."
+      "_note": "Auto-fetches from the stable URL. (Previously had an empty sha256, which made Build-Kit skip it; 'unpinned' is the correct marker for a rolling-in-place URL.) sdelete*.exe is removed post-extract (not whitelisted)."
     },
     {
       "name": "microsoft-safety-scanner",
       "staging_glob": "msert*.exe",
       "url": "https://go.microsoft.com/fwlink/?LinkId=212732",
+      "filename": "msert.exe",
       "sha256": "unpinned",
       "_unpinned_reason": "MSERT bundles its own malware signatures and expires ~10 days after download, so the binary legitimately differs on every build and a pinned hash would always be stale. Build-Kit logs the actual SHA-256 of the copy it ships.",
       "destination": "tools\\msert",
-      "_note": "64-bit MSERT. Auto-fetches via the fwlink; stage a msert.exe to override."
+      "_note": "64-bit MSERT. Auto-fetches via the fwlink (no extension in the URL, so 'filename' forces msert.exe rather than an extension-less copy). Stage a msert.exe to override."
     },
     {
       "name": "adwcleaner",
       "staging_glob": "adwcleaner*.exe",
-      "url": "",
-      "sha256": "",
+      "url": "https://downloads.malwarebytes.com/file/adwcleaner",
+      "filename": "adwcleaner.exe",
+      "sha256": "unpinned",
+      "_unpinned_reason": "Malwarebytes serves the latest AdwCleaner build from one unversioned URL (302 -> CDN), so the binary changes silently release-to-release and a pinned hash would abort the build on every vendor update without a URL change to signal it. Build-Kit logs the actual SHA-256 of the copy it ships. URL has no extension; 'filename' names the output and Content-Disposition confirms adwcleaner.exe.",
       "destination": "tools\\adwcleaner",
-      "_note": "Stage the single adwcleaner.exe from malwarebytes.com/adwcleaner."
+      "_note": "Auto-fetches the current portable adwcleaner.exe (verified ready-to-run PE32). Stage an adwcleaner*.exe to override/pin."
     },
     {
       "name": "emsisoft-emergency-kit",
@@ -32,23 +36,23 @@
       "url": "",
       "sha256": "",
       "destination": "tools\\emsisoft",
-      "_note": "EEK self-extracts to a folder (default C:\\EEK) containing Run\\a2cmd.exe. Extract once, then place that whole EEK folder in staging named 'emsisoft' (a folder). GET-TOOLS.md has the steps."
+      "_note": "STAGING ONLY - not auto-fetched. The download (https://dl.emsisoft.com/EmsisoftEmergencyKit.exe, ~319 MB, refreshed daily) is a 7-Zip SFX, and the kit needs the EXTRACTED tree (Run\\a2cmd.exe), not the SFX itself - Build-Kit does not run installers. Extract on the build machine ('7z x EmsisoftEmergencyKit.exe -oC:\\EEK -y', or run it once to unpack to C:\\EEK), then place that EEK folder in staging named 'emsisoft'. a2cmd.exe still needs an online signature update on first use ('a2cmd /u'). GET-TOOLS.md has the steps."
     },
     {
       "name": "bleachbit-portable",
       "staging_glob": "BleachBit*portable*.zip",
-      "url": "",
-      "sha256": "",
+      "url": "https://download.bleachbit.org/BleachBit-6.0.2-portable.zip",
+      "sha256": "0322920a592ba311cb374b4f44053ee35f793c5a5690f1f8cb419b57321b2883",
       "destination": "tools\\bleachbit",
-      "_note": "The 'portable' zip from bleachbit.org/download (has bleachbit_console.exe)."
+      "_note": "Auto-fetches BleachBit 6.0.2 portable. SHA-256 matches the vendor's published sha256sum.txt exactly. Zip wraps a single 'BleachBit-Portable\\' folder; Build-Kit flattens it so the binary lands at tools\\bleachbit\\bleachbit_console.exe as the playbook expects. Version-pinned URL: when BleachBit ships a new release this URL 404s (Build-Kit skips gracefully) - bump the url+sha256 to the current portable zip (its hash is at download.bleachbit.org/bleachbit-<ver>-sha256sum.txt) or stage it. Do NOT use the /get/ path - it serves an HTML interstitial."
     },
     {
       "name": "wiztree-portable",
       "staging_glob": "wiztree*.zip",
-      "url": "",
-      "sha256": "",
+      "url": "https://diskanalyzer.com/files/wiztree_4_32_portable.zip",
+      "sha256": "38638b1b302b828f206c05472fb53b7db447deb2b6fc76f0d1739b514464a21a",
       "destination": "tools\\wiztree",
-      "_note": "The portable zip from diskanalyzer.com (has WizTree64.exe)."
+      "_note": "Auto-fetches WizTree 4.32 portable (301-redirects to a CDN; Build-Kit follows it). Extracts WizTree64.exe (and 32-bit WizTree.exe) at the root. Version-pinned URL: bump url+sha256 on a new WizTree release, or stage the current portable zip."
     },
     {
       "name": "smartmontools",
@@ -56,31 +60,32 @@
       "url": "",
       "sha256": "",
       "destination": "tools\\smartmontools",
-      "_note": "No official portable build. Install smartmontools once on the build machine (or 7-Zip-extract its installer) and place the resulting smartctl.exe (and any DLLs beside it) in staging. GET-TOOLS.md has the steps."
+      "_note": "STAGING ONLY - not auto-fetchable to a portable binary. Every official Windows build (SourceForge 7.5 and builds.smartmontools.org) ships ONLY the NSIS installer smartmontools-7.5.win32-setup.exe, never a bare smartctl.exe. Extract it on the build machine with 7-Zip ('7z x smartmontools-7.5.win32-setup.exe' -> bin\\smartctl.exe) or silent-install ('...setup.exe /S' then copy from %ProgramFiles%\\smartmontools\\bin\\), and stage smartctl.exe (+ its DLLs). GET-TOOLS.md has the steps. Installer URL for reference: https://sourceforge.net/projects/smartmontools/files/smartmontools/7.5/smartmontools-7.5.win32-setup.exe/download"
     },
     {
       "name": "speedtest-cli",
       "staging_glob": "*speedtest*win64*.zip",
-      "url": "",
-      "sha256": "",
+      "url": "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-win64.zip",
+      "sha256": "13e3d888b845d301a556419e31f14ab9bff57e3f06089ef2fd3bdc9ba6841efa",
       "destination": "tools\\speedtest",
-      "_note": "Ookla's URL is version-specific and changes; stage the current win64 zip from speedtest.net/apps/cli rather than pinning a URL that rots."
+      "_note": "Auto-fetches Ookla Speedtest CLI 1.2.0 (win64). Extracts speedtest.exe at the root. Version-pinned URL: bump url+sha256 on a new release, or stage the current win64 zip. RUNTIME NOTE for the repair agent: speedtest.exe blocks on an interactive license/GDPR prompt on first run - it must be invoked with '--accept-license --accept-gdpr'."
     },
     {
       "name": "nirsoft-bluescreenview",
       "staging_glob": "bluescreenview*.zip",
-      "url": "",
-      "sha256": "",
+      "url": "https://www.nirsoft.net/utils/bluescreenview-x64.zip",
+      "sha256": "unpinned",
+      "_unpinned_reason": "NirSoft rebuilds BlueScreenView in place under one unversioned URL, so the zip's bytes change silently between releases and a pinned hash would abort the build on the vendor's next rebuild. Build-Kit logs the actual SHA-256 of the copy it ships. (NirSoft rejects empty/scripted user-agents; Build-Kit sends a browser UA.)",
       "destination": "tools\\nirsoft",
-      "_note": "Just BlueScreenView from nirsoft.net (the one CLAUDE.md references). Add other NirSoft zips to staging with matching globs if you extend the whitelist."
+      "_note": "Auto-fetches the 64-bit BlueScreenView (extracts BlueScreenView.exe). Add other NirSoft zips to staging with matching globs if you extend the whitelist."
     },
     {
       "name": "snappy-driver-installer-origin",
       "staging_glob": "SDIO*.zip",
-      "url": "",
-      "sha256": "",
+      "url": "https://www.glenn.delahoy.com/downloads/sdio/SDIO_2.0.3.886.zip",
+      "sha256": "c769f99ff955eace45c0d61aeb592019571071559b209876f131977aff75142b",
       "destination": "tools\\sdio",
-      "_note": "From glenn.delahoy.com/snappy-driver-installer-origin. Stage the SDIO zip; add the NETWORK driverpack (drivers\\DP_*LAN*/*WLAN*) into staging\\SDIO too if you want offline NIC recovery (full packs are tens of GB - network-only is a few hundred MB)."
+      "_note": "Auto-fetches SDIO 2.0.3.886 (the tool only, ~11.7 MB - launchers SDIO_x64_R886.exe / SDIO_R886.exe; it downloads driverpack indexes at runtime). Version-pinned URL with no 'latest' alias: bump url+sha256 on a new SDIO release, or stage the current zip. For OFFLINE NIC recovery you still stage the NETWORK driverpack (drivers\\DP_*LAN*/*WLAN*) into staging\\SDIO yourself - that is not auto-fetched (full packs are tens of GB; network-only is a few hundred MB)."
     },
     {
       "name": "windows-debugging-tools-cdb",
@@ -88,23 +93,26 @@
       "url": "",
       "sha256": "",
       "destination": "tools\\windbg",
-      "_note": "cdb.exe + its DLLs from the Windows SDK 'Debugging Tools for Windows'. Install that SDK feature once, copy the x64 Debugging Tools folder, and place it in staging named 'windbg' (a folder). Optional / heaviest - skip for a first full build."
+      "_note": "STAGING ONLY - not auto-fetchable. There is no direct URL to cdb.exe; the only download is the 1.45 MB SDK bootstrapper winsdksetup.exe (current: https://go.microsoft.com/fwlink/?linkid=2376217, SDK 10.0.28000.2705), which pulls the debugger MSIs at install time. On the build machine run 'winsdksetup.exe /features OptionId.WindowsDesktopDebuggers /quiet' (or '/layout <dir>' offline), then copy C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\ (cdb.exe + its sibling DLLs dbgeng.dll/dbghelp.dll) into staging named 'windbg' (a folder). Optional / heaviest - skip for a first full build."
     },
     {
       "name": "win11debloat",
       "staging_glob": "Win11Debloat*.zip",
-      "url": "",
-      "sha256": "",
+      "url": "https://github.com/Raphire/Win11Debloat/archive/refs/tags/2026.08.24.zip",
+      "sha256": "unpinned",
+      "_unpinned_reason": "GitHub's /archive/refs/tags/<tag>.zip is generated on demand and is NOT byte-stable - GitHub has changed archive compression before, so the same tag can hash differently over time. Pinning would risk a false mismatch abort. Build-Kit logs the actual SHA-256 of the copy it ships. (This repo uses date tags with no 'v' prefix, e.g. 2026.08.24.)",
       "destination": "tools\\win11debloat",
-      "_note": "Source-code zip of a pinned release from github.com/Raphire/Win11Debloat/releases."
+      "_note": "Auto-fetches the pinned release source zip. The archive wraps a single Win11Debloat-2026.08.24\\ folder; Build-Kit flattens it so Win11Debloat.ps1 lands at tools\\win11debloat\\Win11Debloat.ps1. Bump the tag in the url to move releases. There are no release-asset zips - the source archive IS the artifact."
     },
     {
       "name": "oo-shutup10",
       "staging_glob": "OOSU10*.exe",
-      "url": "",
-      "sha256": "",
+      "url": "https://dl5.oo-software.com/files/ooshutup10/OOSU10.exe",
+      "filename": "OOSU10.exe",
+      "sha256": "unpinned",
+      "_unpinned_reason": "O&O serves the latest OOSU10.exe from one stable, unversioned path and refreshes it in place, so the binary changes silently between releases and a pinned hash would abort the build on the vendor's next refresh. Build-Kit logs the actual SHA-256 of the copy it ships.",
       "destination": "tools\\oosu10",
-      "_note": "Single OOSU10.exe from oo-software.com/en/shutup10. Add your curated 'recommended.cfg' to staging too if you want a default profile shipped."
+      "_note": "Auto-fetches the single portable OOSU10.exe (~76 MB, runs directly). 'filename' forces the .exe extension so it is copied, not treated as an archive. Add your curated 'recommended.cfg' to staging too if you want a default profile shipped."
     }
   ]
 }
