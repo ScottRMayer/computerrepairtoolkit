@@ -71,24 +71,42 @@ if (-not (Test-Path $localClaude)) {
     Invoke-Expression (Invoke-RestMethod 'https://claude.ai/install.ps1')
 }
 
-$versionsDir = Join-Path $localClaude 'versions'
-$latestVersion = Get-ChildItem $versionsDir -Directory -ErrorAction Stop |
-    Sort-Object { [version]($_.Name -replace '[^\d.]', '') } -Descending |
-    Select-Object -First 1
-
-if (-not $latestVersion) {
-    throw "No installed version found under $versionsDir — install may have failed."
-}
-
 $destClaudeDir = Join-Path $UsbRoot 'bin\claude'
-Write-BuildLog "Copying $($latestVersion.FullName) -> $destClaudeDir"
 New-Item -ItemType Directory -Path $destClaudeDir -Force | Out-Null
-Copy-Item -Path (Join-Path $latestVersion.FullName '*') -Destination $destClaudeDir -Recurse -Force
+
+# The installed layout differs by platform, so detect it rather than assume:
+#   - Windows native: a single self-contained claude.exe (~200MB) in
+#     .local\bin\, and .local\share\claude\versions\ is EMPTY.
+#   - macOS/Linux (and possibly future Windows): a versioned payload dir
+#     under .local\share\claude\versions\<version>\ that must be copied whole.
+$versionsDir = Join-Path $localClaude 'versions'
+$latestVersion = if (Test-Path $versionsDir) {
+    Get-ChildItem $versionsDir -Directory -ErrorAction SilentlyContinue |
+        Sort-Object { [version]($_.Name -replace '[^\d.]', '') } -Descending |
+        Select-Object -First 1
+} else { $null }
+
+if ($latestVersion) {
+    Write-BuildLog "Copying versioned payload $($latestVersion.FullName) -> $destClaudeDir"
+    Copy-Item -Path (Join-Path $latestVersion.FullName '*') -Destination $destClaudeDir -Recurse -Force
+} else {
+    # Single-file layout: find the real binary. Prefer the known install path,
+    # fall back to whatever `claude` resolves to on PATH.
+    $binExe = Join-Path $env:USERPROFILE '.local\bin\claude.exe'
+    if (-not (Test-Path $binExe)) {
+        $binExe = (Get-Command claude -ErrorAction SilentlyContinue).Source
+    }
+    if (-not $binExe -or -not (Test-Path $binExe)) {
+        throw "Could not locate claude.exe to stage. Looked for a versions\ payload under '$versionsDir' (none) and a single binary at '$env:USERPROFILE\.local\bin\claude.exe' (none). Run: dir `$env:USERPROFILE\.local\bin"
+    }
+    Write-BuildLog "Copying self-contained binary $binExe -> $destClaudeDir\claude.exe ($([math]::Round((Get-Item $binExe).Length/1MB)) MB)"
+    Copy-Item -Path $binExe -Destination (Join-Path $destClaudeDir 'claude.exe') -Force
+}
 
 if (-not (Test-Path (Join-Path $destClaudeDir 'claude.exe'))) {
-    throw "claude.exe not found in $destClaudeDir after copy. See docs/verification-checklist.md step 2 - this copy has not been confirmed to produce a working portable binary."
+    throw "claude.exe not found in $destClaudeDir after copy. See docs/verification-checklist.md step 2."
 }
-Write-BuildLog "Native binary staged. NOTE: whether this copy actually runs standalone from a non-default path is unverified — see docs/verification-checklist.md."
+Write-BuildLog "Native binary staged. The build gate below is the real check that this copy runs."
 
 # --- 2. Copy the kit tree ---------------------------------------------------
 Write-BuildLog "Copying kit\ -> $UsbRoot"
