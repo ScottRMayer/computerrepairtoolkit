@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Regression test for kit/hooks/PreToolUse-Guard.ps1. Feeds it real tool
     events on stdin and asserts deny vs. allow. Run: pwsh -File this.ps1

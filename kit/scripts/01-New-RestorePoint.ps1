@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Creates a verified System Restore point (normal mode), or a Safe Mode
     substitute (-SafeModeFallback). See docs/decisions.md for why the

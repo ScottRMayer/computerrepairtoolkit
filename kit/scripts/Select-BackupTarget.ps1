@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Interactive volume picker for the user-data backup destination. Run by
     Start-Repair.ps1 at launch, while a human is still present — the agent

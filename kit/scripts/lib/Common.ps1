@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Shared helpers for the PC Repair Kit's PowerShell scripts.
 

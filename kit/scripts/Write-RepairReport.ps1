@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Turns a finished repair session into a plain-English HTML report card that
     a non-technical family member (or the kit owner) can actually read. The

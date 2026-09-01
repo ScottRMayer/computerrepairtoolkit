@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Writes a JSON system inventory snapshot for the agent to read before
     diagnosing anything. Uses Get-CimInstance exclusively — WMIC was

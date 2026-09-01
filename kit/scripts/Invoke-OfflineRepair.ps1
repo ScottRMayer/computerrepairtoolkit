@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Offline boot-repair for a Windows install that WON'T boot. Run from a WinPE
     recovery environment (booted via Ventoy from this same USB), NOT from a

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     PreToolUse guard hook. Denies argument-level dangerous actions that the
     permissions.deny string rules structurally cannot catch, on every shell

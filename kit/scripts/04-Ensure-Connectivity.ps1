@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Gets the target machine a working path to api.anthropic.com before the
     agent is launched. Deterministic PowerShell only — this CANNOT be the

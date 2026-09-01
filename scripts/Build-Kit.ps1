@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Assembles the USB kit at -UsbRoot from this repo's kit\ tree plus a
     freshly-installed Claude Code native binary, checksum-verified tools,

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Backs up user data files ahead of any repair action. Optional — the
     operator decides at launch whether to run it and where it goes (see

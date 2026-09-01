@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     USB kit entry point. Handles the operator-present steps (backup target
     selection, credentials, Defender exclusions, logging), then launches

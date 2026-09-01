@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Detects whether Windows booted into Safe Mode, and if so, which variant.
 

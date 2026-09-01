@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Adds (or removes, with -Remove) Defender scan exclusions for the USB
     kit's tool/bin directories, so NirSoft/PsExec/AdwCleaner-style
