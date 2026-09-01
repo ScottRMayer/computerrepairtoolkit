@@ -304,8 +304,29 @@ if ($IsoPath) {
             throw "Neither install.wim nor install.esd found on the mounted ISO."
         }
         $isoDestDir = Join-Path $UsbRoot 'iso'
+        New-Item -ItemType Directory -Path $isoDestDir -Force | Out-Null
+
+        # Pre-flight: a Windows install.wim is routinely >4GB. A FAT32 USB
+        # cannot hold a single file that big (Windows reports the 4GB overflow
+        # as "not enough space on disk", which is misleading), and any drive
+        # too small rejects the copy with a raw IOException after writing GBs.
+        # Fail early with an actionable message instead.
+        $wimBytes = (Get-Item $sourceWim).Length
+        $wimGB = [math]::Round($wimBytes / 1GB, 2)
+        $destLetter = (Split-Path -Qualifier $isoDestDir).TrimEnd(':')
+        $destVol = Get-Volume -DriveLetter $destLetter -ErrorAction SilentlyContinue
+        if ($destVol) {
+            if ($destVol.FileSystem -eq 'FAT32' -and $wimBytes -ge 4GB) {
+                throw "$(Split-Path -Leaf $sourceWim) is $wimGB GB, but drive ${destLetter}: is FAT32 (4GB max per file - Windows reports this as 'not enough space'). Reformat the drive as NTFS (recommended for a Windows repair drive) or exFAT, then re-run the build; the tools re-fetch quickly. e.g.  Format-Volume -DriveLetter $destLetter -FileSystem NTFS"
+            }
+            if ($null -ne $destVol.SizeRemaining -and $destVol.SizeRemaining -lt $wimBytes) {
+                $freeGB = [math]::Round($destVol.SizeRemaining / 1GB, 2)
+                throw "Not enough free space on ${destLetter}: for $(Split-Path -Leaf $sourceWim): need $wimGB GB, have $freeGB GB free. Use a larger drive or free space, then re-run."
+            }
+        }
+
         Copy-Item -Path $sourceWim -Destination $isoDestDir -Force
-        Write-BuildLog "Copied $(Split-Path -Leaf $sourceWim) to $isoDestDir"
+        Write-BuildLog "Copied $(Split-Path -Leaf $sourceWim) ($wimGB GB) to $isoDestDir"
     } finally {
         Dismount-DiskImage -ImagePath $IsoPath | Out-Null
     }
