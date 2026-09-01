@@ -91,6 +91,14 @@ function Import-KitAuthEnv {
             if ($value) {
                 Set-Item -Path "Env:$name" -Value $value
             }
+        } elseif ($line -match '^sk-ant-') {
+            # Tolerate a bare token line with no KEY= prefix. Pasting just the
+            # token (without CLAUDE_CODE_OAUTH_TOKEN=) is an easy hand-entry
+            # mistake; a lone sk-ant-... value can only be the OAuth token.
+            Set-Item -Path 'Env:CLAUDE_CODE_OAUTH_TOKEN' -Value $line
+        } elseif ($line -match '^sk-') {
+            # Any other Anthropic-style key on its own line -> treat as API key.
+            Set-Item -Path 'Env:ANTHROPIC_API_KEY' -Value $line
         }
     }
     return $true
