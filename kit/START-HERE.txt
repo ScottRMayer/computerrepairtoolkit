@@ -22,10 +22,11 @@ HOW TO USE IT
      scan is running.
 
   Not sure yet? For a safe first run that only LOOKS and changes nothing,
-  right-click Repair-This-PC, and if offered "Run as administrator" say yes,
-  or run it from a PowerShell window as:
-        .\Start-Repair.ps1 -RepairMode Check
-  It will tell you what it WOULD fix, without touching anything.
+  double-click            Check-This-PC
+  instead. It will tell you what it WOULD fix, without touching anything.
+  (It still needs the internet and may repair the connection to get there,
+  and it takes a restore point and a copy of your files first - those are
+  the safety nets, not repairs.)
   5. When it's done, you'll get a summary of what it found,
      what it changed, and anything a person still needs to
      look at.

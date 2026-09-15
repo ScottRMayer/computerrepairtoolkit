@@ -17,6 +17,9 @@ kit/reports/
 *.wim
 *.esd
 
+# Python bytecode from running the test scripts
+__pycache__/
+
 # OS/editor noise
 .DS_Store
 Thumbs.db

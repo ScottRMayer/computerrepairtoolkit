@@ -8,8 +8,8 @@
   "properties": {
     "outcome": {
       "type": "string",
-      "enum": ["fixed", "partial", "needs_person", "nothing_found"],
-      "description": "fixed = repairs done and complete; partial = a reboot or second run is needed to finish; needs_person = hit the hardware tripwire or a blocked/deny-listed action requires a human; nothing_found = the machine was healthy."
+      "enum": ["fixed", "partial", "needs_person", "nothing_found", "check_only"],
+      "description": "fixed = repairs done and complete; partial = a reboot or second run is needed to finish; needs_person = hit the hardware tripwire or a blocked/deny-listed action requires a human; nothing_found = the machine was healthy; check_only = a -RepairMode Check dry run (what_i_changed lists what WOULD be changed)."
     },
     "headline": {
       "type": "string",

@@ -51,8 +51,16 @@ $requiredWithMargin = [long]($RequiredBytes * 1.05)
 # DriveType 2 = Removable, 3 = Local Fixed Disk. Network drives are
 # deliberately excluded: an unattended multi-hour copy to a share that may
 # drop is a worse failure mode than not backing up at all.
-$volumes = Get-CimInstance -ClassName Win32_LogicalDisk -ErrorAction Stop |
-    Where-Object { $_.DriveType -in 2, 3 -and $_.FreeSpace -ne $null }
+$volumes = $null
+try {
+    $volumes = Get-CimInstance -ClassName Win32_LogicalDisk -ErrorAction Stop |
+        Where-Object { $_.DriveType -in 2, 3 -and $_.FreeSpace -ne $null }
+} catch {
+    # A broken WMI repository is itself a repair finding; it must not unwind
+    # the launcher before the operator can choose to skip the backup.
+    Write-Warning "Cannot enumerate volumes ($_). Re-run with -BackupDestination <path> or -BackupMode Skip."
+    return $null
+}
 
 if (-not $volumes) {
     Write-Warning 'No fixed or removable volumes found to back up to.'

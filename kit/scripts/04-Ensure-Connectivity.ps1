@@ -82,10 +82,14 @@ function Invoke-Rung {
     if ($SkipRemediation) { return $false }
     [void]$attempted.Add($Name)
     Write-KitLog -LogPath $LogPath -Message "Connectivity rung: $Name"
-    try { & $Action } catch {
+    # Discard whatever the action emits. Set-Date returns a DateTime,
+    # Enable-NetAdapter and friends can emit objects too; anything left on
+    # the pipeline here would be returned alongside the probe result and make
+    # "$online" truthy regardless of the re-probe.
+    try { $null = & $Action } catch {
         Write-KitLog -LogPath $LogPath -Level WARN -Message "Rung '$Name' errored: $_"
     }
-    return (Test-AnthropicReachable)
+    return [bool](Test-AnthropicReachable)
 }
 
 function New-Result {
@@ -191,13 +195,29 @@ $online = Invoke-Rung 'R3-hosts-hijack' {
         # this file may be deliberate and is none of our business.
         $bad = $lines | Where-Object { $_ -notmatch '^\s*#' -and $_ -match '(anthropic|claude)' }
         if ($bad) {
-            Copy-Item $hosts "$hosts.repairkit.bak" -Force -ErrorAction SilentlyContinue
-            [void]$findings.Add("hosts file redirected Anthropic/Claude domains (likely malware). Commented out $($bad.Count) line(s); original saved as hosts.repairkit.bak.")
+            $bad = @($bad)
             $patched = $lines | ForEach-Object {
                 if ($_ -notmatch '^\s*#' -and $_ -match '(anthropic|claude)') { "# [repair-kit] $_" } else { $_ }
             }
-            $patched | Set-Content $hosts -Encoding ASCII -ErrorAction SilentlyContinue
-            & ipconfig /flushdns 2>&1 | Out-Null
+            try {
+                Copy-Item $hosts "$hosts.repairkit.bak" -Force -ErrorAction Stop
+                # Malware commonly sets the file read-only; clear it so the write
+                # can succeed, and write UTF-8 without BOM (the hosts parser is
+                # ASCII-compatible and this keeps any non-ASCII comment intact,
+                # where -Encoding ASCII would have replaced it with '?').
+                $attrs = (Get-Item $hosts -Force).Attributes
+                if ($attrs -band [System.IO.FileAttributes]::ReadOnly) {
+                    Set-ItemProperty -Path $hosts -Name Attributes -Value ($attrs -bxor [System.IO.FileAttributes]::ReadOnly) -ErrorAction Stop
+                }
+                [System.IO.File]::WriteAllLines($hosts, [string[]]$patched, (New-Object System.Text.UTF8Encoding $false))
+                # Verify before claiming success.
+                $after = Get-Content $hosts -ErrorAction Stop | Where-Object { $_ -notmatch '^\s*#' -and $_ -match '(anthropic|claude)' }
+                if ($after) { throw "hosts file still contains $(@($after).Count) redirecting line(s) after the rewrite" }
+                [void]$findings.Add("hosts file redirected Anthropic/Claude domains (likely malware). Commented out $($bad.Count) line(s); original saved as hosts.repairkit.bak.")
+                & ipconfig /flushdns 2>&1 | Out-Null
+            } catch {
+                [void]$findings.Add("hosts file redirects Anthropic/Claude domains ($($bad.Count) line(s), likely malware) and could NOT be repaired: $_")
+            }
         }
     }
 }

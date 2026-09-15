@@ -102,10 +102,14 @@ $rules = @(
     # how malware persists; a repair never does it. (The launcher adds a
     # scan exclusion for the USB tool dir and removes it — that is not the
     # agent, and not on C:.)
-    @{ Re = '(?i)set-mppreference.*-disable';                          Why = 'Disabling Microsoft Defender settings is blocked — that is malware behavior, not repair.' }
-    @{ Re = '(?i)(add|set)-mppreference.*exclusion';                   Why = 'Adding a Defender exclusion is blocked — it is a common malware-persistence step and is never part of an autonomous repair.' }
-    @{ Re = '(?i)disableantispyware|disablerealtimemonitoring|disablebehaviormonitoring'; Why = 'Turning off Defender protection is blocked.' }
-    @{ Re = '(?i)tamperprotection';                                    Why = 'Touching Defender Tamper Protection is blocked.' }
+    # Anchored on WRITES only: (Get-MpPreference).DisableRealtimeMonitoring
+    # and Get-MpComputerStatus are how the malware sweep READS this state and
+    # must pass; a bare property-name match denied them.
+    @{ Re = '(?i)set-mppreference\b.*-disable';                        Why = 'Disabling Microsoft Defender settings is blocked — that is malware behavior, not repair.' }
+    @{ Re = '(?i)(add|set)-mppreference\b.*exclusion';                 Why = 'Adding a Defender exclusion is blocked — it is a common malware-persistence step and is never part of an autonomous repair.' }
+    @{ Re = '(?i)((new|set)-itemproperty|reg(\.exe)?\s+add)\b.*?(disableantispyware|disablerealtimemonitoring|disablebehaviormonitoring|disableioavprotection|disableonaccessprotection|tamperprotection)'; Why = 'Writing a Defender-disabling policy value (DisableAntiSpyware, DisableRealtimeMonitoring, Tamper Protection, ...) is blocked. Removing such a value that malware set is allowed.' }
+    @{ Re = '(?i)\b(sc(\.exe)?\s+(config|stop|delete|pause)|stop-service|set-service|net(\.exe)?\s+stop|psservice(64)?(\.exe)?\s+(stop|setconfig|pause))\b.*?\b(windefend|wdnissvc|wdfilter|wdboot|sense|mpssvc|securityhealthservice)\b'; Why = 'Stopping, pausing or reconfiguring a Defender / firewall / Security Center service is blocked — that is malware behavior, not repair. Querying them is fine.' }
+    @{ Re = '(?i)set-mppreference\b.*tamperprotection|(uninstall|remove)-windowsfeature\b.*defender|dism(\.exe)?\s+.*(/remove-capability|/disable-feature).*defender'; Why = 'Touching Defender Tamper Protection or removing Defender is blocked.' }
 
     # Registry persistence / boot-integrity keys — writing these is an
     # infection technique, not a fix. (Reading/enumerating them is fine.)

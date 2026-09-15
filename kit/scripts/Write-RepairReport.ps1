@@ -34,9 +34,12 @@ $reportsDir = Join-Path $KitRoot 'reports'
 New-Item -ItemType Directory -Path $reportsDir -Force | Out-Null
 
 function Read-JsonSafe {
+    # -Encoding UTF8 throughout: files written by claude.exe and by the agent
+    # are BOM-less UTF-8, which Windows PowerShell 5.1 would otherwise decode
+    # as the ANSI code page (mojibake for any non-ASCII text).
     param([string]$Path)
     if (-not (Test-Path $Path)) { return $null }
-    try { return Get-Content $Path -Raw | ConvertFrom-Json } catch { return $null }
+    try { return Get-Content $Path -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
 }
 
 $ctx     = Read-JsonSafe (Join-Path $KitRoot 'state\session-context.json')
@@ -44,7 +47,7 @@ $summary = Read-JsonSafe (Join-Path $KitRoot 'state\repair-summary.json')
 $rpState = Read-JsonSafe (Join-Path $KitRoot 'state\restore-point.json')
 $bkState = Read-JsonSafe (Join-Path $KitRoot 'state\backup-result.json')
 $scanFlag = Join-Path $KitRoot 'state\backup-needs-scan.flag'
-$scanWarn = if (Test-Path $scanFlag) { (Get-Content $scanFlag -Raw -ErrorAction SilentlyContinue) } else { $null }
+$scanWarn = if (Test-Path $scanFlag) { (Get-Content $scanFlag -Raw -Encoding UTF8 -ErrorAction SilentlyContinue) } else { $null }
 
 function Get-TranscriptFinalMessage {
     # Fallback for when the agent didn't leave repair-summary.json: pull its
@@ -55,7 +58,7 @@ function Get-TranscriptFinalMessage {
             Sort-Object LastWriteTime -Descending | Select-Object -First 1
         if (-not $log) { return $null }
         $final = $null
-        foreach ($line in (Get-Content $log.FullName)) {
+        foreach ($line in (Get-Content $log.FullName -Encoding UTF8)) {
             if (-not $line.Trim()) { continue }
             $obj = $null; try { $obj = $line | ConvertFrom-Json } catch { continue }
             if ($obj.type -eq 'result' -and $obj.result) { $final = [string]$obj.result }
@@ -74,11 +77,13 @@ $transcriptTail = if (-not $summary) { Get-TranscriptFinalMessage } else { $null
 # --- Decide the headline badge -------------------------------------------
 # Launcher exit code is authoritative for "did it even run"; the agent's
 # self-reported outcome refines a run that completed.
+$checkMode = ($ctx -and $ctx.repair_mode -eq 'Check')
 $outcome = if ($ExitCode -eq 3) { 'offline' }
            elseif ($ExitCode -eq 4) { 'guard_failed' }
            elseif ($ExitCode -eq 5) { 'auth_failed' }
            elseif ($ExitCode -eq 2) { 'timeout' }
            elseif ($ExitCode -ne 0) { 'stopped' }
+           elseif ($checkMode) { 'check_only' }          # a dry run never "completed repairs"
            elseif ($summary -and $summary.outcome) { $summary.outcome }
            else { 'unknown' }
 
@@ -87,6 +92,7 @@ $badge = switch ($outcome) {
     'partial'      { @{ text = 'Some repairs done - more needed';          color = '#9a6700'; bg = '#fff8e1' } }
     'needs_person' { @{ text = 'Needs a person';                           color = '#9a6700'; bg = '#fff8e1' } }
     'nothing_found'{ @{ text = 'Checked - nothing to fix';                 color = '#1a7f37'; bg = '#e6f4ea' } }
+    'check_only'   { @{ text = 'Checked only - nothing was changed';       color = '#0969da'; bg = '#e7f0fd' } }
     'offline'      { @{ text = "Couldn't start - no internet";             color = '#b42318'; bg = '#fdecea' } }
     'guard_failed' { @{ text = "Couldn't start - safety check failed";     color = '#b42318'; bg = '#fdecea' } }
     'auth_failed'  { @{ text = "Couldn't start - sign-in expired";         color = '#b42318'; bg = '#fdecea' } }
@@ -170,8 +176,8 @@ $agentBlock = if ($summary) {
       $(List $summary.what_i_found 'Nothing notable was flagged.')
     </div>
     <div class="card">
-      <h2>What it changed</h2>
-      $(List $summary.what_i_changed 'No changes were made.')
+      <h2>$(if ($checkMode) { 'What it would change (check-only run - nothing was done)' } else { 'What it changed' })</h2>
+      $(List $summary.what_i_changed $(if ($checkMode) { 'It found nothing it would change.' } else { 'No changes were made.' }))
     </div>
     <div class="card needs">
       <h2>What still needs a person</h2>
@@ -234,6 +240,7 @@ $html = @"
   <div class="badge">$(Enc $badge.text)</div>
 
   $(if ($summary -and $summary.headline) { "<div class='card'><p>$(Enc $summary.headline)</p></div>" })
+  $(if ($checkMode) { "<div class='card'><p class='muted'>This was a <b>check-only</b> run: the assistant diagnosed but changed nothing. The kit itself may still have fixed the network connection to get online (listed below if so), created a restore point, and temporarily excluded its own tools from Defender (removed again at the end).</p></div>" })
 
   $scanBlock
 

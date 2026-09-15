@@ -15,6 +15,24 @@ param()
 $KitRoot = Get-KitRoot
 $LogPath = Get-DefaultLogPath -KitRoot $KitRoot -Prefix 'inventory'
 
+function ConvertTo-JsonFriendly {
+    <#
+    Windows PowerShell 5.1's ConvertTo-Json renders a DateTime as
+    "\/Date(1757941200000)\/" — opaque to the agent. Rewrite every DateTime
+    property as an ISO-8601 string before serializing.
+    #>
+    param([Parameter(ValueFromPipeline)]$InputObject)
+    process {
+        if ($null -eq $InputObject) { return }
+        foreach ($p in $InputObject.PSObject.Properties) {
+            if ($p.Value -is [datetime]) {
+                try { $p.Value = $p.Value.ToString('o') } catch { }
+            }
+        }
+        $InputObject
+    }
+}
+
 function Get-CimSafe {
     <#
     One bad CIM class shouldn't abort the whole inventory — record the
@@ -25,49 +43,22 @@ function Get-CimSafe {
     try {
         $result = Get-CimInstance -ClassName $ClassName -ErrorAction Stop
         if ($Properties) {
-            return $result | Select-Object $Properties
+            return $result | Select-Object $Properties | ConvertTo-JsonFriendly
         }
-        return $result | Select-Object *
+        return $result | Select-Object * | ConvertTo-JsonFriendly
     } catch {
         Write-KitLog -LogPath $LogPath -Level WARN -Message "Get-CimInstance $ClassName failed: $_"
         return @{ error = "$_" }
     }
 }
 
-function Get-BitLockerState {
-    <#
-    Prefers the BitLocker module; falls back to parsing manage-bde, which is
-    present on editions where the PowerShell module isn't. Never throws — a
-    machine with no BitLocker at all is the common case, not an error.
-    #>
-    try {
-        if (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue) {
-            $volumes = Get-BitLockerVolume -ErrorAction Stop |
-                Select-Object MountPoint, VolumeStatus, ProtectionStatus, EncryptionPercentage, EncryptionMethod
-            return @{
-                source  = 'Get-BitLockerVolume'
-                volumes = @($volumes)
-                any_protected = [bool](@($volumes | Where-Object { $_.ProtectionStatus -eq 'On' }).Count)
-            }
-        }
-
-        $raw = & manage-bde -status 2>&1 | Out-String
-        return @{
-            source        = 'manage-bde'
-            raw           = $raw
-            any_protected = ($raw -match 'Protection\s+On')
-        }
-    } catch {
-        Write-KitLog -LogPath $LogPath -Level WARN -Message "Could not determine BitLocker state: $_"
-        return @{ source = 'unavailable'; error = "$_"; any_protected = $null }
-    }
-}
+# Get-BitLockerState lives in lib\Common.ps1 (shared with the launcher).
 
 function Get-MemoryDiagnosticResults {
     try {
         $events = Get-WinEvent -LogName System -MaxEvents 10 -ErrorAction Stop -FilterXPath `
             "*[System[Provider[@Name='Microsoft-Windows-MemoryDiagnostics-Results']]]"
-        return @($events | Select-Object TimeCreated, Id, LevelDisplayName, Message)
+        return @($events | Select-Object TimeCreated, Id, LevelDisplayName, Message | ConvertTo-JsonFriendly)
     } catch {
         # No prior run is the normal case and produces a "no events found"
         # error, so this is informational rather than a warning.
@@ -113,6 +104,8 @@ $inventory = [ordered]@{
     # encrypted with protection on, boot-config or system-volume work can
     # trigger a recovery-key demand at next boot — which on a family machine
     # where nobody has the key is permanent data loss, not an inconvenience.
+    # any_protected = $null means "could not read" and is treated as
+    # encrypted by CLAUDE.md (fail closed).
     bitlocker = Get-BitLockerState
 
     # Results of any PRIOR Windows Memory Diagnostic run. Free diagnosis:

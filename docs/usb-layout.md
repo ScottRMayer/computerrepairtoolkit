@@ -4,29 +4,42 @@
 
 ```
 E:\                              (drive letter varies)
-├── Start-Repair.ps1              entry point — right-click → Run with PowerShell
+├── Repair-This-PC.cmd            THE double-click entry point: self-elevates, then runs Start-Repair.ps1
+├── Check-This-PC.cmd             same, but -RepairMode Check (diagnose and report only, change nothing)
+├── START-HERE.txt                plain-language instructions for the operator
+├── Start-Repair.ps1              launcher orchestration (never advertise the .ps1 — its default association is Notepad)
 ├── CLAUDE.md                     repair playbook + tool whitelist, from kit/CLAUDE.md
 ├── .claude\
-│   └── settings.json             bypassPermissions default, auto-update disabled
+│   └── settings.json             bypassPermissions default, the deny list, PreToolUse hook wiring, auto-update disabled
+├── config\
+│   └── system-prompt-append.txt  untrusted-content policy passed via --append-system-prompt-file
 ├── bin\
-│   └── claude\                   native claude.exe + bundled ripgrep, copied whole from the build machine's install
+│   └── claude\claude.exe         native single-file binary copied from the build machine's install
 ├── scripts\
 │   ├── 00-Backup-UserData.ps1    run by the launcher, not the agent
 │   ├── 01-New-RestorePoint.ps1
 │   ├── 02-Get-SystemInventory.ps1
 │   ├── 03-Set-DefenderExclusions.ps1   (-Remove undoes them at session end)
+│   ├── 04-Ensure-Connectivity.ps1      clock → adapter/Wi-Fi → DNS → hosts → proxy ladder
+│   ├── Invoke-OfflineRepair.ps1        WinPE-side boot repair (docs/offline-repair-playbook.md)
 │   ├── Select-BackupTarget.ps1   interactive volume picker for the backup destination
 │   ├── Test-SafeMode.ps1
+│   ├── Write-RepairReport.ps1    renders the HTML report card
 │   └── lib\Common.ps1
-├── tools\                        the 22 whitelisted tool binaries — see docs/tool-whitelist.md
-│   ├── sysinternals\
+├── tools\                        the bundled tool binaries — see docs/tool-whitelist.md and scripts/tool-manifest.json
+│   ├── sysinternals\             (sdelete*.exe deleted at build — not whitelisted)
+│   ├── msert\                    Microsoft Safety Scanner — expires ~10 days after download
 │   ├── adwcleaner\
-│   ├── emsisoft\
+│   ├── emsisoft\                 extracted Emergency Kit tree (Run\a2cmd.exe) — staging only
 │   ├── bleachbit\
 │   ├── wiztree\
-│   ├── smartmontools\            smartctl.exe extracted from the NSIS installer
+│   ├── smartmontools\            smartctl.exe extracted from the NSIS installer — staging only
 │   ├── speedtest\
-│   └── nirsoft\
+│   ├── nirsoft\
+│   ├── sdio\                     Snappy Driver Installer Origin (+ staged network driverpack)
+│   ├── windbg\                   cdb.exe + dbgeng/dbghelp — staging only, optional
+│   ├── win11debloat\
+│   └── oosu10\
 ├── docs\                         design docs, copied from the repo at build time
 │   ├── tool-invocations.md       exact command lines — CLAUDE.md sends the agent here
 │   ├── safe-mode-constraints.md
@@ -34,9 +47,17 @@ E:\                              (drive letter varies)
 ├── config\
 │   ├── auth.env.example          template — copy to auth.env, fill in, never commit auth.env
 │   └── auth.env                  gitignored — real CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY lives here
-├── state\
+├── state\                        cleared at the start of every run — nothing here is ever stale
 │   ├── .claude\                  CLAUDE_CONFIG_DIR target — credentials, session history
-│   └── session-context.json      what the launcher did, read by the agent first
+│   ├── canary\                   scratch project for the pre-launch guard/credential self-test
+│   ├── session-context.json      what the launcher did (backup, boot mode, connectivity fixes,
+│   │                             self-test result), read by the agent first
+│   ├── backup-result.json        what 00-Backup-UserData.ps1 measured, copied and reconciled
+│   ├── restore-point.json        the restore point 01-New-RestorePoint.ps1 verified (or that none was)
+│   ├── repair-summary.json       written by the AGENT as its last act — feeds the report card
+│   └── backup-needs-scan.flag    written by the agent if malware was found and a backup exists
+├── reports\
+│   └── RepairReport-<ts>.html    the plain-English report card the operator reads
 ├── iso\
 │   └── <edition>-install.wim     for DISM /Source: — see docs/iso-role.md
 ├── ISO\                          Ventoy boot menu (only if the USB is Ventoy-based)
@@ -44,7 +65,8 @@ E:\                              (drive letter varies)
 │   └── memtest86plus.iso         offline RAM test (optional)
 ├── hooks\
 │   └── PreToolUse-Guard.ps1      argument-level guard, wired via .claude/settings.json
-├── logs\                         per-run transcripts (PowerShell transcript + claude stream-json)
+├── logs\                         per-run logs: start-repair-*.log, connectivity/backup/inventory
+│                                 logs, preflight-*.jsonl (self-test), claude-run-*.jsonl (transcript)
 └── backups\                      only used if the operator picks the kit's own drive
                                   as the backup destination — usually they should
                                   pick an external drive instead, see docs/decisions.md
@@ -61,25 +83,30 @@ Run on your own machine, with internet access, before handing the drive to
 anyone:
 
 ```powershell
-.\scripts\Build-Kit.ps1 -UsbRoot E:\ -Edition Win11_24H2
+.\scripts\Build-Kit.ps1 -UsbRoot E:\ -Minimal                                   # smoke-test drive first (see BUILD.md)
+.\scripts\Build-Kit.ps1 -UsbRoot E:\ -IsoPath D:\Win11_24H2_English_x64.iso -StagingDir C:\kit-staging
 ```
 
 This:
 
-1. Runs the native installer (`irm https://claude.ai/install.ps1 | iex`) into
-   a scratch profile if `claude.exe` isn't already installed locally, then
-   copies the resulting `~/.local/share/claude/versions/<version>/` directory
-   to `$UsbRoot\bin\claude\` — see
+1. Runs the native installer (`irm https://claude.ai/install.ps1 | iex`) if
+   `claude.exe` isn't already installed locally, then copies the native
+   binary to `$UsbRoot\bin\claude\claude.exe` (the Windows install is a
+   single self-contained executable in `%USERPROFILE%\.local\bin\`; a
+   `versions\<version>\` payload directory is copied whole if one exists
+   instead) — see
    [`docs/authentication.md`](authentication.md#portability-no-nodejs-bundling-needed).
+   A build gate then runs `claude.exe --version` from the USB path.
 2. Copies `kit/` (this repo's playbook, scripts, settings template) onto the
    drive, plus `docs/*.md` into `docs\` — the agent reads
    `docs\tool-invocations.md` at repair time, and the build fails loudly if
    that file doesn't land.
-3. Fetches and checksum-verifies each whitelisted tool per
-   [`docs/tool-whitelist.md`](tool-whitelist.md) into `tools\`.
-4. Prompts you to run `claude setup-token` if `config\auth.env` doesn't
-   already exist, and writes the result there — see
-   [`docs/authentication.md`](authentication.md).
+3. Fetches (or ingests from `-StagingDir`) and checksum-verifies each
+   bundled tool per `scripts/tool-manifest.json` into `tools\` — see
+   `GET-TOOLS.md` for the three staging-only tools.
+4. Tells you to run `claude setup-token` and create `config\auth.env` by
+   hand if it doesn't already exist (an existing one is never overwritten) —
+   see [`docs/authentication.md`](authentication.md).
 5. Extracts `install.wim` from the Windows ISO you point it at into `iso\`.
 
 It does **not** run unattended and does **not** touch a target machine — it
@@ -88,10 +115,11 @@ only assembles the drive.
 ## Fetching and checksumming tools
 
 Every vendor binary is downloaded once at build time from the vendor's own
-site (not a mirror), and its SHA-256 is pinned in
-`scripts/tool-manifest.json` (checksums recorded at build time — not yet
-populated in this repo; see [`docs/status.md`](status.md)). `Build-Kit.ps1`
-refuses to place a binary on the drive whose hash doesn't match. This is
+site (not a mirror). Version-pinned URLs carry a pinned SHA-256 in
+`scripts/tool-manifest.json` and `Build-Kit.ps1` refuses to place a binary
+on the drive whose hash doesn't match; rolling/unversioned URLs (Sysinternals
+suite, MSERT, AdwCleaner, NirSoft, OOSU10, GitHub tag archives) are marked
+`"unpinned"` with a stated reason, and the build logs the hash it shipped. This is
 what makes "tools ship bundled and checksummed, never pulled live at repair
 time" (see [`docs/decisions.md`](decisions.md)) actually true rather than
 aspirational.

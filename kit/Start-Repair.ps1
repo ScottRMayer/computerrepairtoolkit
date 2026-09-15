@@ -96,7 +96,12 @@ param(
     # first run). Fix = full autonomous repair (default). The agent reads this
     # from session-context.json and CLAUDE.md enforces the posture.
     [ValidateSet('Check', 'Fix')]
-    [string]$RepairMode = 'Fix'
+    [string]$RepairMode = 'Fix',
+
+    # Marker Repair-This-PC.cmd adds when it re-launches itself elevated, so
+    # a machine where the elevation probe misfires cannot loop on the UAC
+    # prompt forever. Ignored here.
+    [switch]$KitElevated
 )
 
 $KitRoot = $PSScriptRoot
@@ -157,6 +162,20 @@ $mode = & (Join-Path $KitRoot 'scripts\Test-SafeMode.ps1')
 Write-KitLog -LogPath $LogPath -Message "Boot mode detected: $mode"
 if ($mode -ne 'Normal') {
     Write-KitLog -LogPath $LogPath -Level WARN -Message 'Safe Mode — see docs/safe-mode-constraints.md. Restore points cannot be created here; the reg-export fallback will be used instead.'
+}
+if ($RepairMode -eq 'Check') {
+    Write-KitLog -LogPath $LogPath -Message 'CHECK-ONLY run: the agent will diagnose and report but change nothing. The launcher still takes the safety nets (backup, restore point), may repair the network connection to get online, and adds temporary Defender exclusions that are removed at the end.'
+}
+
+# --- BitLocker, read here and handed to the agent (fails CLOSED) ---
+# A volume with protection on turns boot-config / system-volume work into a
+# recovery-key demand at next boot; if the state cannot be read at all,
+# CLAUDE.md treats the machine as encrypted.
+$bitlocker = Get-BitLockerState
+if ($bitlocker.any_protected -eq $true) {
+    Write-KitLog -LogPath $LogPath -Level WARN -Message 'BitLocker protection is ON for at least one volume. The agent is told to keep boot configuration and the system volume out of scope.'
+} elseif ($null -eq $bitlocker.any_protected -or -not $bitlocker.reliable) {
+    Write-KitLog -LogPath $LogPath -Level WARN -Message "BitLocker state could not be read reliably ($($bitlocker.source)). The agent is told to treat the machine as encrypted."
 }
 
 # --- Backup (operator-present step) ---
@@ -287,6 +306,13 @@ $sessionContext = [ordered]@{
     backup       = $backupResult
     target_user  = $BackupUserName
     repair_mode  = $RepairMode
+    bitlocker    = $bitlocker
+    limits       = [ordered]@{
+        max_turns   = $MaxTurns
+        max_minutes = $MaxMinutes
+        # The agent should stop starting long scans as this approaches.
+        deadline    = (Get-Date).AddMinutes($MaxMinutes).ToString('o')
+    }
     connectivity = $null
     preflight    = $null
     defender_exclusions_added = $false
@@ -342,6 +368,39 @@ docs\tool-invocations.md on this drive.
     exit 3
 }
 Write-KitLog -LogPath $LogPath -Message "Connectivity confirmed (rung: $($net.Rung))."
+
+# --- Off-USB copy of the record --------------------------------------------
+# The transcript is the only record of what an unattended agent did, and
+# it lives on the same writable USB a compromised host — or the agent
+# itself, steered by injection — could delete or edit. Copying it to the
+# operator-chosen backup drive gives a second copy on separate media. This
+# is a copy, not a guarantee: neither location is tamper-evident (see
+# docs/red-team-review.md). Idempotent: called from the launch's finally
+# block and again after the report card exists, into the same folder.
+$script:auditDir = $null
+$script:auditWarned = $false
+function Copy-AuditTrail {
+    if (-not ($backupResult.destination -and (Test-Path $backupResult.destination))) {
+        if (-not $script:auditWarned) {
+            Write-KitLog -LogPath $LogPath -Level WARN -Message 'No off-USB backup drive was chosen, so the run record exists only on the USB. Copy logs\, state\ and reports\ to separate media before reusing this drive.'
+            $script:auditWarned = $true
+        }
+        return
+    }
+    try {
+        if (-not $script:auditDir) {
+            $script:auditDir = Join-Path $backupResult.destination "RepairKit-Audit-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        }
+        New-Item -ItemType Directory -Path $script:auditDir -Force | Out-Null
+        Copy-Item -Path (Join-Path $KitRoot 'logs\*') -Destination $script:auditDir -Force -ErrorAction SilentlyContinue
+        Copy-Item -Path (Join-Path $stateDir '*.json') -Destination $script:auditDir -Force -ErrorAction SilentlyContinue
+        Copy-Item -Path (Join-Path $stateDir '*.flag') -Destination $script:auditDir -Force -ErrorAction SilentlyContinue
+        Copy-Item -Path (Join-Path $KitRoot 'reports\*.html') -Destination $script:auditDir -Force -ErrorAction SilentlyContinue
+        Write-KitLog -LogPath $LogPath -Message "Run record copied off-USB to $($script:auditDir)"
+    } catch {
+        Write-KitLog -LogPath $LogPath -Level WARN -Message "Could not copy the run record off-USB: $_. The on-USB copy under logs\ is still the primary record."
+    }
+}
 
 # --- Run the agent as a monitored child, narrating its transcript ---------
 function Start-MonitoredAgent {
@@ -440,6 +499,36 @@ function Start-MonitoredAgent {
     }
 }
 
+function Stop-ProcessTree {
+    <#
+        Kill claude.exe AND everything it spawned. Stop-Process on the agent
+        alone leaves a running sfc/DISM/chkdsk/MpCmdRun child working on the
+        machine while the launcher removes the Defender exclusions and writes
+        a report as if it were quiescent. taskkill /T walks the tree.
+    #>
+    param([int]$ProcessId)
+    try {
+        $children = @(Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction SilentlyContinue |
+            ForEach-Object { "$($_.Name) (pid $($_.ProcessId))" })
+        if ($children.Count -gt 0) {
+            Write-KitLog -LogPath $LogPath -Level WARN -Message "Stopping the agent's still-running child process(es): $($children -join ', ')"
+        }
+    } catch { }
+    & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
+    Start-Sleep -Seconds 2
+    try { Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue } catch { }
+}
+
+function Get-TranscriptResultSubtype {
+    # The last "result" event's subtype ('success', 'error_max_turns', ...).
+    param([string]$Path)
+    try {
+        $last = Get-Content $Path -Encoding UTF8 -ErrorAction Stop | Where-Object { $_ -match '"type"\s*:\s*"result"' } | Select-Object -Last 1
+        if ($last -and $last -match '"subtype"\s*:\s*"([^"]+)"') { return $Matches[1] }
+    } catch { }
+    return $null
+}
+
 # --- Pre-launch self-test: does the credential work, and does the guard bite? -
 function Invoke-AgentPreflight {
     <#
@@ -482,16 +571,16 @@ function Invoke-AgentPreflight {
     } finally { Pop-Location }
 
     if ($run.TimedOut) {
-        try { Stop-Process -Id $run.Process.Id -Force -ErrorAction SilentlyContinue } catch { }
+        Stop-ProcessTree -ProcessId $run.Process.Id
         $result.detail = "preflight did not finish within $PreflightSeconds s"
         return $result
     }
     $result.exit_code = $run.ExitCode
 
     $text = ''
-    try { $text = Get-Content $outPath -Raw -ErrorAction Stop } catch { }
+    try { $text = Get-Content $outPath -Raw -Encoding UTF8 -ErrorAction Stop } catch { }
     $err = ''
-    try { $err = Get-Content "$outPath.err" -Raw -ErrorAction Stop } catch { }
+    try { $err = Get-Content "$outPath.err" -Raw -Encoding UTF8 -ErrorAction Stop } catch { }
     $all = "$text`n$err"
 
     $gotResult = ($text -match '"type"\s*:\s*"result"')
@@ -609,34 +698,56 @@ try {
     # (authored without Windows hardware) — see docs/verification-checklist.md.
     $run = Start-MonitoredAgent -Arguments $claudeArgs -OutPath $runLogPath -TimeoutSeconds ($MaxMinutes * 60)
 
-    if ($run.TimedOut) {
-        Write-KitLog -LogPath $LogPath -Level WARN -Message "Agent exceeded the $MaxMinutes-minute wall-clock cap. Interrupting, then resuming once to let it finish and write its summary."
-        try { $run.Process.CloseMainWindow() | Out-Null } catch { }
-        Start-Sleep -Seconds 5
-        if (-not $run.Process.HasExited) { Stop-Process -Id $run.Process.Id -Force -ErrorAction SilentlyContinue }
-
-        # One bounded resume so the agent can wrap up + write repair-summary.json.
-        # Same system-prompt policy and its own (short) wall clock, so a second
-        # hang cannot hold the machine either.
+    # One bounded resume so the agent can wrap up + write repair-summary.json,
+    # used both when the wall clock ran out and when --max-turns did (claude
+    # exits non-zero with result subtype error_max_turns in that case, having
+    # possibly never reached its summary). Same system-prompt policy and its
+    # own short wall clock, so a second hang cannot hold the machine either.
+    # Named claude-run-<ts>-resume.jsonl so the report card's transcript
+    # fallback (newest claude-run-*.jsonl) sees the agent's LAST words.
+    function Invoke-BoundedResume {
+        param([string]$Reason)
         $resumeArgs = @(
             '--resume', $SessionId,
-            '-p', 'You were interrupted at a time limit. Do not start new work. Finish only what is safely in progress, then write state\repair-summary.json as instructed and stop.',
+            '-p', "You were interrupted ($Reason). Do not start new work. Finish only what is safely in progress, then write state\repair-summary.json as instructed and stop.",
             '--dangerously-skip-permissions',
             '--model', $FallbackModel,
             '--max-turns', '8',
             '--output-format', 'stream-json',
             '--verbose'
         ) + $sysPromptArgs
-        $resume = Start-MonitoredAgent -Arguments $resumeArgs -OutPath "$runLogPath.resume" -TimeoutSeconds 600
+        $resumePath = $runLogPath -replace '\.jsonl$', '-resume.jsonl'
+        $resume = Start-MonitoredAgent -Arguments $resumeArgs -OutPath $resumePath -TimeoutSeconds 600
         if ($resume.TimedOut) {
             Write-KitLog -LogPath $LogPath -Level ERROR -Message 'The bounded resume also hit its 10-minute cap; stopping it.'
-            if (-not $resume.Process.HasExited) { Stop-Process -Id $resume.Process.Id -Force -ErrorAction SilentlyContinue }
+            Stop-ProcessTree -ProcessId $resume.Process.Id
         }
+    }
+
+    if ($run.TimedOut) {
+        Write-KitLog -LogPath $LogPath -Level WARN -Message "Agent exceeded the $MaxMinutes-minute wall-clock cap. Interrupting, then resuming once to let it finish and write its summary."
+        try { $run.Process.CloseMainWindow() | Out-Null } catch { }
+        Start-Sleep -Seconds 5
+        if (-not $run.Process.HasExited) { Stop-ProcessTree -ProcessId $run.Process.Id }
+        Invoke-BoundedResume -Reason 'at a time limit'
         $exitCode = 2
     } else {
         $exitCode = $run.ExitCode
+        if ($null -eq $exitCode) {
+            # Never let an unreadable exit code masquerade as success (exit $null is 0).
+            Write-KitLog -LogPath $LogPath -Level ERROR -Message 'The agent process exit code could not be read; treating the run as stopped early.'
+            $exitCode = 1
+        }
         if ($run.HookDenials -gt 0) {
             Write-KitLog -LogPath $LogPath -Level WARN -Message "The PreToolUse guard denied $($run.HookDenials) command(s) during the run — see the transcript; each one is either an out-of-scope action or an injection attempt worth reading."
+        }
+        $subtype = Get-TranscriptResultSubtype -Path $runLogPath
+        if ($subtype -eq 'error_max_turns' -and -not (Test-Path (Join-Path $stateDir 'repair-summary.json'))) {
+            Write-KitLog -LogPath $LogPath -Level WARN -Message "Agent used all $MaxTurns turns without writing its summary. Resuming once, briefly, so it can wrap up."
+            Invoke-BoundedResume -Reason 'because the turn limit was reached'
+            $exitCode = 2
+        } elseif ($subtype -and $subtype -ne 'success') {
+            Write-KitLog -LogPath $LogPath -Level WARN -Message "Agent session ended with result '$subtype'."
         }
     }
 } finally {
@@ -647,26 +758,8 @@ try {
     Write-KitLog -LogPath $LogPath -Message 'Removing Defender exclusions added for this session...'
     & (Join-Path $KitRoot 'scripts\03-Set-DefenderExclusions.ps1') -Remove
 
-    # Evacuate the audit trail off the USB. The transcript is the only record
-    # of what an unattended agent did, and until now it lived only on the
-    # same writable USB a compromised host — or the agent itself, steered by
-    # injection — could delete or edit. Copying it to the operator-chosen
-    # backup drive gives a second copy on separate media. This is a copy, not
-    # a guarantee: neither location is tamper-evident (see docs/red-team-review.md).
-    if ($backupResult.destination -and (Test-Path $backupResult.destination)) {
-        try {
-            $auditDir = Join-Path $backupResult.destination "RepairKit-Audit-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-            New-Item -ItemType Directory -Path $auditDir -Force | Out-Null
-            Copy-Item -Path (Join-Path $KitRoot 'logs\*') -Destination $auditDir -Force -ErrorAction SilentlyContinue
-            Copy-Item -Path (Join-Path $stateDir '*.json') -Destination $auditDir -Force -ErrorAction SilentlyContinue
-            Copy-Item -Path (Join-Path $stateDir '*.flag') -Destination $auditDir -Force -ErrorAction SilentlyContinue
-            Write-KitLog -LogPath $LogPath -Message "Audit trail copied off-USB to $auditDir"
-        } catch {
-            Write-KitLog -LogPath $LogPath -Level WARN -Message "Could not copy audit trail off-USB: $_. The on-USB transcript at $runLogPath is still the primary record."
-        }
-    } else {
-        Write-KitLog -LogPath $LogPath -Level WARN -Message 'No off-USB backup drive was chosen, so the run transcript exists only on the USB. Copy logs\ to separate media before reusing this drive.'
-    }
+    # Evacuate the audit trail off the USB (again after the report card below).
+    Copy-AuditTrail
 }
 
 if ($exitCode -eq 0) {
@@ -686,7 +779,7 @@ if ($exitCode -eq 0) {
 $scanFlag = Join-Path $stateDir 'backup-needs-scan.flag'
 if ($backupResult.completed) {
     if (Test-Path $scanFlag) {
-        $flagBody = (Get-Content $scanFlag -Raw -ErrorAction SilentlyContinue)
+        $flagBody = (Get-Content $scanFlag -Raw -Encoding UTF8 -ErrorAction SilentlyContinue)
         Write-KitLog -LogPath $LogPath -Level WARN -Message "MALWARE WAS FOUND ON THIS MACHINE and user data was backed up to $($backupResult.destination). That backup MAY CONTAIN INFECTED FILES. Scan it with a clean machine's antivirus BEFORE opening any file from it or plugging the drive into an uninfected computer. Details: $flagBody"
     } else {
         Write-KitLog -LogPath $LogPath -Message "Reminder: user data was backed up to $($backupResult.destination). As a precaution, scan that drive before reusing it on another machine."
@@ -704,5 +797,8 @@ try {
 } catch {
     Write-KitLog -LogPath $LogPath -Level WARN -Message "Could not generate the report card: $_"
 }
+
+# Second pass so the summary and the report card themselves are on separate media.
+Copy-AuditTrail
 
 exit $exitCode

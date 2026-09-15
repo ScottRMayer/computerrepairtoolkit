@@ -15,24 +15,36 @@ REM =====================================================================
 
 cd /d "%~dp0"
 
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    echo.
-    echo   Asking for administrator permission...
-    echo   Click YES on the prompt that appears.
-    echo.
-    REM Re-launch elevated. Any arguments given to this .cmd (e.g.
-    REM -RepairMode Check, -BackupMode Skip) are carried across the
-    REM elevation boundary; without this they were silently dropped.
-    if "%~1"=="" (
-        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-            "Start-Process -FilePath '%~f0' -Verb RunAs"
-    ) else (
-        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-            "Start-Process -FilePath '%~f0' -ArgumentList '%*' -Verb RunAs"
-    )
-    exit /b
+REM Already re-launched elevated once? Then never prompt again, whatever the
+REM probe below says - a misfiring probe must not become a UAC prompt loop.
+if /i "%~1"=="-KitElevated" goto :run
+
+REM Elevation probe. fltmc needs admin and needs no service ("net session"
+REM depends on the Server service, which a locked-down or broken machine may
+REM have disabled - that made this .cmd re-prompt forever).
+fltmc >nul 2>&1
+if %errorlevel% equ 0 goto :run
+whoami /groups 2>nul | findstr /c:"S-1-16-12288" >nul 2>&1
+if %errorlevel% equ 0 goto :run
+
+echo.
+echo   Asking for administrator permission...
+echo   Click YES on the prompt that appears.
+echo.
+REM Re-launch elevated. Any arguments given to this .cmd (e.g.
+REM -RepairMode Check, -BackupMode Skip) are carried across the
+REM elevation boundary; without this they were silently dropped.
+REM -KitElevated is the loop guard (Start-Repair.ps1 accepts and ignores it).
+if "%~1"=="" (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+        "Start-Process -FilePath '%~f0' -ArgumentList '-KitElevated' -Verb RunAs"
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+        "Start-Process -FilePath '%~f0' -ArgumentList '-KitElevated %*' -Verb RunAs"
 )
+exit /b
+
+:run
 
 echo.
 echo   ==========================================

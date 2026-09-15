@@ -92,6 +92,9 @@ function Import-KitAuthEnv {
         if ($parts.Count -eq 2) {
             $name = $parts[0].Trim()
             $value = $parts[1].Trim()
+            # Tolerate the common .env spelling KEY="value" / KEY='value':
+            # the quotes are not part of the token.
+            if ($value -match '^"(.*)"$' -or $value -match "^'(.*)'$") { $value = $Matches[1] }
             if ($value) {
                 Set-Item -Path "Env:$name" -Value $value
             }
@@ -106,6 +109,52 @@ function Import-KitAuthEnv {
         }
     }
     return $true
+}
+
+function Get-BitLockerState {
+    <#
+    .SYNOPSIS
+        BitLocker state for every volume, failing CLOSED: when it cannot be
+        positively read, any_protected is $null and callers must treat the
+        machine as encrypted (see kit/CLAUDE.md). Shared by the launcher
+        (session-context.json) and 02-Get-SystemInventory.ps1.
+
+        Prefers the BitLocker module's structured ProtectionStatus enum; the
+        manage-bde fallback is a text parse of English output and is marked
+        as such so a localized machine is not misread as unprotected.
+    #>
+    try {
+        if (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue) {
+            $volumes = @(Get-BitLockerVolume -ErrorAction Stop |
+                Select-Object MountPoint, VolumeStatus, ProtectionStatus, EncryptionPercentage, EncryptionMethod |
+                ForEach-Object {
+                    [ordered]@{
+                        mount_point           = [string]$_.MountPoint
+                        volume_status         = [string]$_.VolumeStatus
+                        protection_status     = [string]$_.ProtectionStatus
+                        encryption_percentage = $_.EncryptionPercentage
+                        encryption_method     = [string]$_.EncryptionMethod
+                    }
+                })
+            return [ordered]@{
+                source        = 'Get-BitLockerVolume'
+                volumes       = $volumes
+                any_protected = [bool](@($volumes | Where-Object { $_.protection_status -eq 'On' }).Count)
+                reliable      = $true
+            }
+        }
+
+        $raw = & manage-bde -status 2>&1 | Out-String
+        if (-not $raw -or $LASTEXITCODE -ne 0) { throw "manage-bde -status failed (exit $LASTEXITCODE)" }
+        return [ordered]@{
+            source        = 'manage-bde (English text parse)'
+            raw           = $raw
+            any_protected = ($raw -match 'Protection\s+On')
+            reliable      = ($raw -match 'Protection\s+(On|Off)')   # false on a localized machine
+        }
+    } catch {
+        return [ordered]@{ source = 'unavailable'; error = "$_"; any_protected = $null; reliable = $false }
+    }
 }
 
 function ConvertTo-ArgumentString {
