@@ -49,6 +49,16 @@ $LogPath = Get-DefaultLogPath -KitRoot $KitRoot -Prefix 'connectivity'
 
 $findings = [System.Collections.ArrayList]@()
 $attempted = [System.Collections.ArrayList]@()
+# Settings this script changed and how to put them back (also handed to the
+# agent via session-context.json so it never "re-diagnoses" them).
+$reverts = [System.Collections.ArrayList]@()
+
+# Probe the way the agent connects: claude.exe is a Node/Bun binary that
+# does NOT use the WinINET/system proxy (and the launcher scrubs HTTPS_PROXY),
+# whereas Windows PowerShell's Invoke-WebRequest does by default. A probe
+# that succeeded through a proxy the agent cannot use would be a false
+# "online". Direct it is.
+try { [System.Net.WebRequest]::DefaultWebProxy = $null } catch { }
 
 function Test-AnthropicReachable {
     <#
@@ -99,6 +109,7 @@ function New-Result {
         Rung      = $Rung
         Findings  = @($findings)
         Attempted = @($attempted)
+        Reverts   = @($reverts)
     }
 }
 
@@ -147,21 +158,28 @@ $online = Invoke-Rung 'R1-adapter-wifi' {
     if ($WifiSSID) {
         if ($WifiPassword) {
             # Build a profile from scratch when the machine has none.
+            # XML-escape both values: an SSID or passphrase containing & < > "
+            # would otherwise produce a profile netsh silently rejects.
+            $ssidX = [System.Security.SecurityElement]::Escape($WifiSSID)
+            $pskX  = [System.Security.SecurityElement]::Escape($WifiPassword)
             $xml = @"
 <?xml version="1.0"?>
 <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
-  <name>$WifiSSID</name>
-  <SSIDConfig><SSID><name>$WifiSSID</name></SSID></SSIDConfig>
+  <name>$ssidX</name>
+  <SSIDConfig><SSID><name>$ssidX</name></SSID></SSIDConfig>
   <connectionType>ESS</connectionType><connectionMode>auto</connectionMode>
   <MSM><security>
     <authEncryption><authentication>WPA2PSK</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption>
-    <sharedKey><keyType>passPhrase</keyType><protected>false</protected><keyMaterial>$WifiPassword</keyMaterial></sharedKey>
+    <sharedKey><keyType>passPhrase</keyType><protected>false</protected><keyMaterial>$pskX</keyMaterial></sharedKey>
   </security></MSM>
 </WLANProfile>
 "@
             $tmp = Join-Path $env:TEMP 'kit-wifi.xml'
             $xml | Out-File -FilePath $tmp -Encoding utf8
-            & netsh wlan add profile filename="$tmp" 2>&1 | Out-Null
+            $addOut = (& netsh wlan add profile filename="$tmp" 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) {
+                [void]$findings.Add("Could not add the Wi-Fi profile for '$WifiSSID': $addOut")
+            }
             Remove-Item $tmp -Force -ErrorAction SilentlyContinue
         }
         & netsh wlan connect name="$WifiSSID" 2>&1 | Out-Null
@@ -171,20 +189,54 @@ $online = Invoke-Rung 'R1-adapter-wifi' {
 if ($online) { return (New-Result -Online $true -Rung 'R1-adapter-wifi') }
 
 # --- R2: DNS --------------------------------------------------------------
+# Only touch resolvers when the LINK works (a default gateway exists): if the
+# cable is out or the router is down, static DNS fixes nothing and just
+# leaves a permanent change behind. Prior servers are recorded and, if the
+# rung does not get us online, restored.
+$script:dnsLedger = @()
 $online = Invoke-Rung 'R2-dns' {
     & ipconfig /flushdns 2>&1 | Out-Null
+    $hasGateway = [bool](Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Where-Object { $_.NextHop -and $_.NextHop -ne '0.0.0.0' })
+    if (-not $hasGateway) {
+        [void]$findings.Add('No default gateway: the network link itself is down (cable, Wi-Fi, or router), so DNS settings were left alone.')
+        return
+    }
     if (-not (Resolve-DnsName 'api.anthropic.com' -QuickTimeout -ErrorAction SilentlyContinue)) {
-        [void]$findings.Add('DNS could not resolve api.anthropic.com; set public resolvers (1.1.1.1 / 8.8.8.8) on active adapters.')
+        $changed = @()
         Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
             Where-Object Status -eq 'Up' |
             ForEach-Object {
+                $prior = (Get-DnsClientServerAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses
+                $script:dnsLedger += [pscustomobject]@{ ifIndex = $_.ifIndex; name = $_.Name; prior = @($prior) }
                 Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex `
                     -ServerAddresses '1.1.1.1', '8.8.8.8' -ErrorAction SilentlyContinue
+                $changed += "$($_.Name) (was: $(if ($prior) { $prior -join ', ' } else { 'DHCP/none' }))"
             }
         & ipconfig /flushdns 2>&1 | Out-Null
+        if ($changed) {
+            [void]$findings.Add("DNS could not resolve api.anthropic.com; set public resolvers (1.1.1.1 / 8.8.8.8) on: $($changed -join '; ').")
+            [void]$reverts.Add("DNS servers were changed to 1.1.1.1/8.8.8.8 on: $($changed -join '; '). Revert with Set-DnsClientServerAddress -InterfaceIndex <n> -ResetServerAddresses (DHCP) or the prior addresses listed.")
+        }
     }
 }
 if ($online) { return (New-Result -Online $true -Rung 'R2-dns') }
+if ($script:dnsLedger.Count -gt 0) {
+    # It did not help: put the resolvers back rather than leave a change that
+    # fixed nothing.
+    foreach ($entry in $script:dnsLedger) {
+        try {
+            if ($entry.prior -and $entry.prior.Count -gt 0) {
+                Set-DnsClientServerAddress -InterfaceIndex $entry.ifIndex -ServerAddresses $entry.prior -ErrorAction Stop
+            } else {
+                Set-DnsClientServerAddress -InterfaceIndex $entry.ifIndex -ResetServerAddresses -ErrorAction Stop
+            }
+        } catch {
+            [void]$findings.Add("Could not restore the previous DNS servers on $($entry.name): $_")
+        }
+    }
+    [void]$findings.Add('Public DNS resolvers did not restore connectivity; the previous DNS settings were put back.')
+    $reverts.Clear()
+}
 
 # --- R3: hosts-file hijack ------------------------------------------------
 $online = Invoke-Rung 'R3-hosts-hijack' {
@@ -225,19 +277,58 @@ if ($online) { return (New-Result -Online $true -Rung 'R3-hosts-hijack') }
 
 # --- R4: proxy (WinHTTP *and* WinINET) ------------------------------------
 $online = Invoke-Rung 'R4-proxy' {
-    $winhttp = (& netsh winhttp show proxy 2>&1 | Out-String)
-    if ($winhttp -notmatch 'Direct access') {
-        [void]$findings.Add('A WinHTTP proxy was configured; reset to direct access.')
+    # Machine-wide (WinHTTP) proxy: read the registry blob's STRUCTURE, not
+    # netsh's localized text ("Direct access" is English only; a German
+    # machine prints "Direkter Zugriff" and a text match would have reset
+    # the proxy and recorded a false hijack finding on every run).
+    # Serialized WINHTTP proxy struct: DWORD@8 = access flags (1 = direct,
+    # bit 2 = named proxy), DWORD@12 = proxy string length, ASCII string @16.
+    # Layout inferred from public analyses of WinHttpSettings and untested on
+    # hardware (docs/verification-checklist.md); on any parse doubt no
+    # finding is recorded and nothing is reset.
+    $winhttpProxy = $null
+    try {
+        $blob = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Connections' -Name WinHttpSettings -ErrorAction SilentlyContinue).WinHttpSettings
+        if ($blob -and $blob.Length -ge 16) {
+            $flags = [BitConverter]::ToUInt32($blob, 8)
+            $len   = [BitConverter]::ToUInt32($blob, 12)
+            if (($flags -band 2) -and $len -gt 0 -and (16 + $len) -le $blob.Length) {
+                $winhttpProxy = [System.Text.Encoding]::ASCII.GetString($blob, 16, [int]$len)
+            }
+        }
+    } catch { }
+    if ($winhttpProxy) {
+        [void]$findings.Add("A machine-wide (WinHTTP) proxy was configured: '$winhttpProxy'. Reset to direct access.")
+        [void]$reverts.Add("WinHTTP proxy '$winhttpProxy' was reset to direct access. Re-apply with: netsh winhttp set proxy $winhttpProxy")
         & netsh winhttp reset proxy 2>&1 | Out-Null
     }
-    # Consumer and malware proxy hijacks live in WinINET, which the netsh
-    # command above does not touch at all.
-    $ie = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
-    $cur = Get-ItemProperty -Path $ie -ErrorAction SilentlyContinue
-    if ($cur -and $cur.ProxyEnable -eq 1) {
-        [void]$findings.Add("A user-level (WinINET) proxy was enabled: '$($cur.ProxyServer)'. Disabled it; this is a common browser-hijack symptom.")
-        Set-ItemProperty -Path $ie -Name ProxyEnable -Value 0 -ErrorAction SilentlyContinue
+
+    # Consumer and malware proxy hijacks live in WinINET, which netsh does
+    # not touch at all. This script runs elevated, so HKCU is the ADMIN's
+    # hive — check the signed-in family member's hive too (loaded under
+    # HKU\<SID> while they are logged on).
+    $hives = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings')
+    try {
+        $consoleUser = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).UserName
+        if ($consoleUser) {
+            $sid = (New-Object System.Security.Principal.NTAccount($consoleUser)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+            if (-not (Get-PSDrive -Name HKU -ErrorAction SilentlyContinue)) {
+                New-PSDrive -Name HKU -PSProvider Registry -Root HKEY_USERS -Scope Script -ErrorAction Stop | Out-Null
+            }
+            $hives += "HKU:\$sid\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        }
+    } catch { }
+    foreach ($ie in ($hives | Select-Object -Unique)) {
+        $cur = Get-ItemProperty -Path $ie -ErrorAction SilentlyContinue
+        if ($cur -and $cur.ProxyEnable -eq 1) {
+            [void]$findings.Add("A user-level (WinINET) proxy was enabled in $ie`: '$($cur.ProxyServer)'. Disabled it; this is a common browser-hijack symptom.")
+            [void]$reverts.Add("WinINET proxy '$($cur.ProxyServer)' was disabled (ProxyEnable=0) under $ie. Re-enable by setting ProxyEnable back to 1.")
+            Set-ItemProperty -Path $ie -Name ProxyEnable -Value 0 -ErrorAction SilentlyContinue
+        }
     }
+    # Windows PowerShell caches the system proxy at process start; refresh it
+    # so the re-probe observes the change (the probe itself runs direct).
+    try { [System.Net.WebRequest]::DefaultWebProxy = $null } catch { }
 }
 if ($online) { return (New-Result -Online $true -Rung 'R4-proxy') }
 

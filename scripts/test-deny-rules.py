@@ -17,6 +17,15 @@ Matching semantics, per code.claude.com/docs/en/permissions:
     Remove-Item also catches ri/rm/del/rd. That canonicalization is NOT
     modeled here, so this test is stricter than reality on alias forms.
   - compound commands are AST-split and each subcommand checked separately
+    (modeled here with a quote-aware split on `|`, `;` and newline for the
+    PowerShell tool and additionally `&&`/`||` for Bash; a command is
+    denied if the whole string OR any subcommand matches)
+
+The deny list is the layer that never fails, so it stays narrow and
+spelling-exact; the PreToolUse guard (scripts/test-pretooluse-guard.ps1)
+covers the spellings a glob cannot express. Path rules here are ROOT-ONLY:
+deleting C:\Windows itself is denied, deleting a stuck print job under
+C:\Windows\System32\spool\PRINTERS is a repair and must pass.
 
 Add a case to MUST_PASS whenever you add a tool to the whitelist, and to
 MUST_BLOCK whenever you add a deny rule.
@@ -47,6 +56,19 @@ MUST_PASS = [
     ("PowerShell", r"Remove-Item C:\Users\x\AppData\Local\Temp\bad.exe -Force"),
     ("PowerShell", r"Remove-Item 'C:\ProgramData\malware\dropper.dll'"),
     ("PowerShell", r"reg delete HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run /v Evil /f"),
+    # Root-only contract: files/keys UNDER a protected tree are repair targets.
+    ("PowerShell", r"Remove-Item C:\Windows\System32\spool\PRINTERS\* -Force"),
+    ("PowerShell", r"Stop-Service Spooler; Remove-Item C:\Windows\System32\spool\PRINTERS\* -Force; Start-Service Spooler"),
+    ("PowerShell", r'Remove-Item "C:\Windows\Temp\dropper.dll" -Force'),
+    ("PowerShell", r"Remove-Item $env:SystemRoot\SoftwareDistribution.old -Recurse -Force"),
+    ("PowerShell", r"Remove-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run -Name Evil"),
+    ("PowerShell", r'Remove-Item "HKLM:\SOFTWARE\Malware Inc" -Recurse'),
+    ("PowerShell", r"Remove-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -Name DisableAntiSpyware"),
+    ("PowerShell", "shutdown /a"),
+    ("PowerShell", "Restart-Service Spooler"),
+    ("PowerShell", "vssadmin list shadows"),
+    ("PowerShell", "Get-Volume | Format-List"),
+    ("Bash", r'powershell -c "Remove-Item C:\\Windows\\Temp\\dropper.dll -Force"'),
     ("PowerShell", r"E:\tools\sysinternals\autorunsc.exe -accepteula -a *"),
     ("PowerShell", r"E:\tools\sysinternals\handle.exe -accepteula -p 1234"),
     ("PowerShell", "MpCmdRun.exe -Scan -ScanType 2"),
@@ -69,7 +91,8 @@ MUST_PASS = [
     ("Bash", "rm -rf /tmp/scratch"),
     ("Bash", "rm -rf /c/Users/x/AppData/Local/Temp/junk"),
     # Tier-2 ecosystem tool adds (docs/ecosystem-catalog.md) — none is catastrophic.
-    ("PowerShell", r'E:\tools\sdio\sdio.exe -script:"E:\tools\sdio\repair.script" -autoclose'),
+    ("PowerShell", r'& "E:\tools\sdio\SDIO_x64_R887.exe" -script:"E:\tools\sdio\repair.script" -autoclose'),
+    ("PowerShell", r'E:\tools\emsisoft\bin64\a2cmd.exe /f="C:\" /quarantine="E:\logs\quarantine"'),
     ("PowerShell", r'& "E:\tools\windbg\cdb.exe" -z C:\Windows\Minidump\x.dmp -c "!analyze -v; q"'),
     ("PowerShell", r'powershell -ExecutionPolicy Bypass -File "E:\tools\win11debloat\Win11Debloat.ps1" -Silent -RunDefaults -CreateRestorePoint'),
     ("PowerShell", r'OOSU10.exe "E:\tools\oosu10\recommended.cfg" /quiet'),
@@ -103,6 +126,14 @@ MUST_BLOCK = [
     ("PowerShell", r"Remove-Item C:\Windows\System32 -Recurse -Force"),
     ("PowerShell", r"Remove-Item -Path C:\Program Files -Recurse"),
     ("PowerShell", r"Remove-Item HKLM:\SOFTWARE -Recurse"),
+    ("PowerShell", r"Remove-Item 'HKLM:\SYSTEM' -Recurse -Force"),
+    ("PowerShell", r'Remove-Item "C:\Windows" -Recurse -Force'),
+    ("PowerShell", r"Remove-Item C:\ -Recurse -Force"),
+    ("PowerShell", "vssadmin resize shadowstorage /for=C: /on=C: /maxsize=1MB"),
+    ("PowerShell", "shutdown /r /t 0"),
+    ("PowerShell", "Restart-Computer -Force"),
+    ("PowerShell", "Stop-Computer"),
+    ("PowerShell", r"E:\tools\sysinternals\PsExec64.exe -s cmd"),
     ("Bash", "diskpart"),
     ("Bash", "vssadmin delete shadows /all"),
     ("Bash", "format C:"),
@@ -121,6 +152,10 @@ MUST_BLOCK = [
     ("Bash", 'powershell -c "Remove-Item C:\\Windows\\System32 -Recurse -Force"'),
     ("Bash", 'powershell -c "Remove-Item HKLM:\\SOFTWARE -Recurse"'),
     ("Bash", 'powershell -c "$env:SystemRoot | ForEach { Remove-Item $env:SystemRoot -Recurse }"'),
+    ("Bash", r'powershell -c "Remove-Item C:\\Windows -Recurse -Force"'),          # escaped-separator spelling
+    ("Bash", 'powershell -c "Restart-Computer -Force"'),
+    ("Bash", "shutdown /s /t 0"),
+    ("Monitor", "sfc /scannow"),                                                    # the whole tool is denied
 ]
 
 
@@ -137,12 +172,50 @@ def load_rules():
     return parsed
 
 
+def split_subcommands(tool, command):
+    """Quote-aware split into the subcommands the harness checks separately.
+
+    PowerShell: `|`, `;`, newline (the `&&`/`||` chains are PowerShell 7 only
+    and the target runs 5.1, so they are not split there). Bash: `&&`, `||`,
+    `;`, `|`, newline. The whole command is always included too.
+    """
+    seps = ["&&", "||", ";", "|", "\n"] if tool == "Bash" else ["|", ";", "\n"]
+    parts, buf, quote, i = [], "", None, 0
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            buf += ch
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            buf += ch
+            i += 1
+            continue
+        matched = next((sp for sp in seps if command.startswith(sp, i)), None)
+        if matched:
+            parts.append(buf)
+            buf = ""
+            i += len(matched)
+            continue
+        buf += ch
+        i += 1
+    parts.append(buf)
+    return [command] + [p.strip() for p in parts if p.strip() and p.strip() != command]
+
+
 def matching_rules(rules, tool, command):
-    return [
-        f"{t}({p})"
-        for t, p in rules
-        if t == tool and fnmatch.fnmatch(command.lower(), p.lower())
-    ]
+    hits = []
+    for t, p in rules:
+        if t != tool:
+            continue
+        for sub in split_subcommands(tool, command):
+            if fnmatch.fnmatch(sub.lower(), p.lower()):
+                hits.append(f"{t}({p})")
+                break
+    return hits
 
 
 def main():

@@ -59,6 +59,10 @@ param(
 if ($Minimal) { $SkipToolFetch = $true }
 
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 (the default host on the build PC) renders a
+# Write-Progress bar for Invoke-WebRequest -OutFile and Expand-Archive that
+# throttles large downloads/extractions badly (PowerShell/PowerShell#2138).
+$ProgressPreference = 'SilentlyContinue'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
 function Write-BuildLog {
@@ -118,7 +122,12 @@ Write-BuildLog "Native binary staged. The build gate below is the real check tha
 
 # --- 2. Copy the kit tree ---------------------------------------------------
 Write-BuildLog "Copying kit\ -> $UsbRoot"
-Copy-Item -Path (Join-Path $RepoRoot 'kit\*') -Destination $UsbRoot -Recurse -Force -Exclude 'config'
+# Exclude every build-output / runtime directory: a developer checkout that
+# has run Start-Repair.ps1 (or any kit script) carries kit\logs, kit\state
+# (session transcripts, a credential store!), kit\reports etc., and a naive
+# copy would ship them to the drive.
+Copy-Item -Path (Join-Path $RepoRoot 'kit\*') -Destination $UsbRoot -Recurse -Force `
+    -Exclude 'config', 'state', 'logs', 'bin', 'tools', 'iso', 'backups', 'reports'
 # config\ copied separately, file by file, so we ship every template and policy
 # file (auth.env.example, system-prompt-append.txt, settings, etc.) WITHOUT
 # clobbering a real auth.env that a prior build already placed on the drive.
@@ -128,18 +137,30 @@ Get-ChildItem -Path (Join-Path $RepoRoot 'kit\config') -File |
     Where-Object { $_.Name -ne 'auth.env' } |
     ForEach-Object { Copy-Item -Path $_.FullName -Destination $destConfigDir -Force }
 
-foreach ($dir in @('state\.claude', 'logs', 'backups', 'reports', 'iso')) {
+# tools\ is created even for -Minimal: CLAUDE.md's sanity check expects the
+# kit's directories to be siblings, and an absent folder reads as "wrong
+# directory" rather than "no bundled tools".
+foreach ($dir in @('state\.claude', 'logs', 'backups', 'reports', 'iso', 'tools')) {
     New-Item -ItemType Directory -Path (Join-Path $UsbRoot $dir) -Force | Out-Null
 }
 
 # The agent reads docs\tool-invocations.md at repair time for exact command
-# lines, and CLAUDE.md cross-references the other design docs. They're small
-# markdown files, so ship the whole folder rather than cherry-picking and
-# leaving the agent with dangling references.
+# lines, and CLAUDE.md cross-references a few other design docs. Ship ONLY
+# those: docs\spec.md declares itself authoritative over other docs and
+# describes a design target the code does not fully implement (a different
+# result file name, scripts that do not exist) — an agent that consulted it
+# on the target would follow the wrong contract.
 $destDocsDir = Join-Path $UsbRoot 'docs'
 New-Item -ItemType Directory -Path $destDocsDir -Force | Out-Null
-Copy-Item -Path (Join-Path $RepoRoot 'docs\*.md') -Destination $destDocsDir -Force
-Write-BuildLog "Copied design docs to $destDocsDir"
+$shipDocs = @('tool-invocations.md', 'repair-playbook.md', 'safe-mode-constraints.md', 'offline-repair-playbook.md',
+              'tool-whitelist.md', 'iso-role.md', 'authentication.md', 'usb-layout.md', 'verification-checklist.md')
+Get-ChildItem -Path $destDocsDir -Filter '*.md' -ErrorAction SilentlyContinue |
+    Where-Object { $shipDocs -notcontains $_.Name } |
+    ForEach-Object { Remove-Item $_.FullName -Force }   # a previous build shipped everything
+foreach ($doc in $shipDocs) {
+    Copy-Item -Path (Join-Path $RepoRoot "docs\$doc") -Destination $destDocsDir -Force
+}
+Write-BuildLog "Copied the agent-facing docs ($($shipDocs.Count) files) to $destDocsDir"
 
 if (-not (Test-Path (Join-Path $destDocsDir 'tool-invocations.md'))) {
     throw "docs\tool-invocations.md did not reach the drive. CLAUDE.md instructs the agent to read it for exact tool invocations; without it the agent would infer switches on a broken machine."
@@ -160,11 +181,15 @@ if (-not (Test-Path $authEnvPath)) {
 
 # --- 4. Tools ----------------------------------------------------------------
 if ($SkipToolFetch) {
-    Write-BuildLog 'Skipping tool fetch (-SkipToolFetch).'
+    $why = if ($Minimal) { '-Minimal' } else { '-SkipToolFetch' }
+    Write-BuildLog "Skipping tool fetch ($why)."
+    if ($StagingDir) { Write-BuildLog "Ignoring -StagingDir '$StagingDir' because $why was specified." 'WARN' }
 } else {
     $manifestPath = Join-Path $PSScriptRoot 'tool-manifest.json'
     $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
     $staged = 0; $fetched = 0; $skipped = 0
+    $shipped = New-Object System.Collections.Generic.List[object]
+    $missingRequired = New-Object System.Collections.Generic.List[string]
 
     foreach ($tool in $manifest.tools) {
         $destDir = Join-Path $UsbRoot $tool.destination
@@ -177,26 +202,61 @@ if ($SkipToolFetch) {
                 Copy-Item -Path (Join-Path $src '*') -Destination $destDir -Recurse -Force
                 Write-BuildLog "  staged folder '$name' -> $($tool.destination)"
             } elseif ($src -like '*.zip') {
-                Expand-Archive -Path $src -DestinationPath $destDir -Force
-                # Some portable zips wrap everything in a single versioned
-                # top-level folder (e.g. BleachBit-Portable\, Win11Debloat-<tag>\).
-                # Hoist it so the binary lands at tools\<name>\<binary> as the
-                # playbook and docs expect. Only fires when the archive has
-                # exactly one root entry and it's a directory; flat zips (WizTree,
-                # Speedtest, SDIO, NirSoft, Sysinternals) are left untouched.
-                $roots = @(Get-ChildItem -LiteralPath $destDir -Force)
-                if ($roots.Count -eq 1 -and $roots[0].PSIsContainer) {
-                    $wrapper = $roots[0]
-                    Get-ChildItem -LiteralPath $wrapper.FullName -Force |
-                        Move-Item -Destination $destDir -Force
-                    Remove-Item -LiteralPath $wrapper.FullName -Recurse -Force
-                    Write-BuildLog "  flattened wrapper folder '$($wrapper.Name)' in $($tool.destination)"
+                # Extract into a fresh temp directory so the wrapper-folder
+                # hoist below is deterministic: on a REBUILD the destination
+                # already holds last time's files, and a hoist that inspects
+                # the destination would see more than one root and leave the
+                # new binary nested one level down beside the stale one.
+                $tmp = Join-Path $env:TEMP ("kit-extract-" + [guid]::NewGuid().ToString('N'))
+                try {
+                    Expand-Archive -Path $src -DestinationPath $tmp -Force
+                    # Some portable zips wrap everything in a single versioned
+                    # top-level folder (e.g. BleachBit-Portable\, Win11Debloat-<tag>\).
+                    # Hoist it so the binary lands at tools\<name>\<binary> as the
+                    # playbook and docs expect. Only fires when the archive has
+                    # exactly one root entry and it's a directory; flat zips (WizTree,
+                    # Speedtest, SDIO, NirSoft, Sysinternals) are left untouched.
+                    $roots = @(Get-ChildItem -LiteralPath $tmp -Force)
+                    $from = $tmp
+                    if ($roots.Count -eq 1 -and $roots[0].PSIsContainer) {
+                        $from = $roots[0].FullName
+                        Write-BuildLog "  flattened wrapper folder '$($roots[0].Name)' in $($tool.destination)"
+                    }
+                    Copy-Item -Path (Join-Path $from '*') -Destination $destDir -Recurse -Force
+                } finally {
+                    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
                 }
                 Write-BuildLog "  extracted '$name' -> $($tool.destination) (SHA256 $((Get-FileHash $src -Algorithm SHA256).Hash))"
             } else {
                 Copy-Item -Path $src -Destination $destDir -Force
                 Write-BuildLog "  copied '$name' -> $($tool.destination) (SHA256 $((Get-FileHash $src -Algorithm SHA256).Hash))"
             }
+        }
+
+        # Extra staged files (a config profile) and an extra staged folder (a
+        # driverpack tree) that ride along with the tool. Both are optional
+        # and only ever come from -StagingDir.
+        function Publish-Extras {
+            if (-not $StagingDir -or -not (Test-Path $StagingDir)) { return }
+            foreach ($glob in @($tool.staging_extra)) {
+                if (-not $glob) { continue }
+                Get-ChildItem -Path $StagingDir -Filter $glob -File -ErrorAction SilentlyContinue | ForEach-Object {
+                    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+                    Copy-Item -Path $_.FullName -Destination $destDir -Force
+                    Write-BuildLog "  staged extra file '$($_.Name)' -> $($tool.destination)"
+                }
+            }
+            if ($tool.staging_extra_dir) {
+                $extra = Join-Path $StagingDir $tool.staging_extra_dir
+                if (Test-Path $extra -PathType Container) {
+                    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+                    Copy-Item -Path (Join-Path $extra '*') -Destination $destDir -Recurse -Force
+                    Write-BuildLog "  staged extra folder '$($tool.staging_extra_dir)\*' -> $($tool.destination)"
+                }
+            }
+        }
+        function Record-Shipped([string]$source, [string]$hash) {
+            $shipped.Add([ordered]@{ name = $tool.name; destination = $tool.destination; present = $true; source = $source; sha256 = $hash })
         }
 
         # 1) Prefer a staged download (robust against dead vendor URLs).
@@ -208,13 +268,19 @@ if ($SkipToolFetch) {
         if ($stagedHit) {
             Write-BuildLog "Staging '$($tool.name)' from $($stagedHit.Name)"
             Publish-Artifact $stagedHit.FullName $stagedHit.Name
+            Publish-Extras
+            $h = if ($stagedHit.PSIsContainer) { 'folder' } else { (Get-FileHash $stagedHit.FullName -Algorithm SHA256).Hash }
+            Record-Shipped "staging:$($stagedHit.Name)" $h
             $staged++
             continue
         }
 
         # 2) Otherwise fetch from a stable URL if one is pinned (or unpinned).
         if (-not $tool.url -or -not $tool.sha256) {
-            Write-BuildLog "Skipping '$($tool.name)': not found in staging and no pinned url/sha256. Download it per GET-TOOLS.md into -StagingDir." 'WARN'
+            $level = if ($tool.required) { 'ERROR' } else { 'WARN' }
+            Write-BuildLog "Skipping '$($tool.name)': not found in staging and no pinned url/sha256. Download it per GET-TOOLS.md into -StagingDir." $level
+            if ($tool.required) { $missingRequired.Add($tool.name) }
+            $shipped.Add([ordered]@{ name = $tool.name; destination = $tool.destination; present = $false; source = 'skipped: staging only, not staged' })
             $skipped++
             continue
         }
@@ -249,6 +315,7 @@ if ($SkipToolFetch) {
             # operator to stage it instead.
             Write-BuildLog "Skipping '$($tool.name)': download failed from $($tool.url) - $($_.Exception.Message). Stage it per GET-TOOLS.md into -StagingDir." 'WARN'
             if (Test-Path $downloadPath) { Remove-Item $downloadPath -Force -ErrorAction SilentlyContinue }
+            $shipped.Add([ordered]@{ name = $tool.name; destination = $tool.destination; present = $false; source = "skipped: download failed ($($_.Exception.Message))" })
             $skipped++
             continue
         }
@@ -264,15 +331,29 @@ if ($SkipToolFetch) {
             Write-BuildLog "Checksum verified for $($tool.name)."
         }
         Publish-Artifact $downloadPath $tool.name
+        Publish-Extras
+        Record-Shipped "url:$($tool.url)" $actualHash
         Remove-Item $downloadPath -Force
         $fetched++
     }
     Write-BuildLog "Tools: $staged staged, $fetched fetched, $skipped skipped."
 
+    # What actually landed, for the agent (CLAUDE.md: a tool absent here is
+    # a capability that is unavailable, not a reason to go looking for it).
+    $shippedPath = Join-Path $UsbRoot 'tools\shipped-tools.json'
+    [ordered]@{ built_at = (Get-Date -Format 'o'); tools = @($shipped) } | ConvertTo-Json -Depth 4 | Set-Content -Path $shippedPath -Encoding UTF8
+    Write-BuildLog "Wrote $shippedPath"
+
+    if ($missingRequired.Count -gt 0) {
+        throw "REQUIRED tool(s) missing from the build: $($missingRequired -join ', '). smartctl is the disk-health gate every write-heavy repair depends on; stage it per GET-TOOLS.md (or build with -Minimal for the smoke-test drive). Refusing to print FULL DRIVE BUILT for a drive that cannot run its own safety gate."
+    }
+
     # Sysinternals ships as one suite archive, so tools excluded from the
     # whitelist arrive whether we want them or not. Delete them rather than
-    # relying on the deny rule alone — see docs/tool-whitelist.md.
-    $excludedBinaries = @('sdelete.exe', 'sdelete64.exe', 'sdelete64a.exe')
+    # relying on the deny rule alone — see docs/tool-whitelist.md. PsExec is
+    # a lateral-movement tool with no repair use in this kit; it must not
+    # ship in a directory the launcher excludes from Defender.
+    $excludedBinaries = @('sdelete.exe', 'sdelete64.exe', 'sdelete64a.exe', 'PsExec.exe', 'PsExec64.exe')
     foreach ($binary in $excludedBinaries) {
         Get-ChildItem -Path (Join-Path $UsbRoot 'tools') -Filter $binary -Recurse -ErrorAction SilentlyContinue |
             ForEach-Object {
@@ -327,6 +408,34 @@ if ($IsoPath) {
 
         Copy-Item -Path $sourceWim -Destination $isoDestDir -Force
         Write-BuildLog "Copied $(Split-Path -Leaf $sourceWim) ($wimGB GB) to $isoDestDir"
+
+        # Record what landed so the agent can build the right DISM /Source:
+        # an .esd needs the ESD: prefix, and index 1 of a multi-edition image
+        # is usually Home, not the target's edition. iso\image-info.json lists
+        # every index with its edition name; the launcher copies it into
+        # session-context.json.
+        $imageFile = Join-Path $isoDestDir (Split-Path -Leaf $sourceWim)
+        $indexes = New-Object System.Collections.Generic.List[object]
+        try {
+            $info = & dism.exe /Get-WimInfo "/WimFile:$imageFile" 2>&1 | Out-String
+            $cur = $null
+            foreach ($line in ($info -split "`r?`n")) {
+                if ($line -match '^\s*Index\s*:\s*(\d+)') { $cur = [ordered]@{ index = [int]$Matches[1]; name = ''; description = '' } ; $indexes.Add($cur) }
+                elseif ($cur -and $line -match '^\s*Name\s*:\s*(.+)$') { $cur.name = $Matches[1].Trim() }
+                elseif ($cur -and $line -match '^\s*Description\s*:\s*(.+)$') { $cur.description = $Matches[1].Trim() }
+            }
+        } catch {
+            Write-BuildLog "Could not read the image index table (dism /Get-WimInfo): $_" 'WARN'
+        }
+        $imageInfo = [ordered]@{
+            file          = "iso\$(Split-Path -Leaf $sourceWim)"
+            format        = if ($imageFile -like '*.esd') { 'ESD' } else { 'WIM' }
+            source_prefix = if ($imageFile -like '*.esd') { 'ESD:' } else { 'WIM:' }
+            indexes       = @($indexes)
+            note          = 'DISM /Source: is <source_prefix><drive>:\<file>:<index>; pick the index whose name matches the target edition (Win32_OperatingSystem.Caption). Index 1 is usually Home.'
+        }
+        $imageInfo | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $isoDestDir 'image-info.json') -Encoding UTF8
+        Write-BuildLog "Wrote iso\image-info.json ($($indexes.Count) index(es))"
     } finally {
         Dismount-DiskImage -ImagePath $IsoPath | Out-Null
     }
@@ -335,8 +444,15 @@ if ($IsoPath) {
 }
 
 # --- 5b. Stage recovery ISOs for the Ventoy boot menu ------------------------
+# boot-images\, not ISO\: Windows file systems are case-insensitive, so ISO\
+# and the iso\ that holds install.wim are the SAME folder, and the docs used
+# to draw them as siblings. Ventoy scans every directory for bootable
+# images, so the name is free.
+if ($RecoveryIso -and $Minimal) {
+    Write-BuildLog 'Ignoring -RecoveryIso because -Minimal was specified (smoke-test drive carries no boot images).' 'WARN'
+}
 if ($RecoveryIso -and -not $Minimal) {
-    $isoDir = Join-Path $UsbRoot 'ISO'
+    $isoDir = Join-Path $UsbRoot 'boot-images'
     New-Item -ItemType Directory -Path $isoDir -Force | Out-Null
     foreach ($iso in $RecoveryIso) {
         if (-not (Test-Path $iso)) {
@@ -344,7 +460,7 @@ if ($RecoveryIso -and -not $Minimal) {
             continue
         }
         $name = Split-Path $iso -Leaf
-        Write-BuildLog "Staging recovery ISO $name into \ISO\ (Ventoy will offer it at boot)..."
+        Write-BuildLog "Staging recovery ISO $name into \boot-images\ (Ventoy will offer it at boot)..."
         Copy-Item -Path $iso -Destination (Join-Path $isoDir $name) -Force
         $h = (Get-FileHash -Path (Join-Path $isoDir $name) -Algorithm SHA256).Hash
         Write-BuildLog "  $name SHA256: $h"
@@ -360,7 +476,14 @@ if ($RecoveryIso -and -not $Minimal) {
 Write-BuildLog 'Build gate: launching claude.exe from the USB path...'
 $usbClaude = Join-Path $destClaudeDir 'claude.exe'
 try {
-    $ver = & $usbClaude --version 2>&1 | Out-String
+    # Scoped 'Continue': under Windows PowerShell 5.1 the script-wide
+    # ErrorActionPreference = Stop turns the FIRST stderr line a native
+    # command writes into a terminating NativeCommandError, which would fail
+    # this gate on a binary that merely printed a warning.
+    $ver = & {
+        $ErrorActionPreference = 'Continue'
+        & $usbClaude --version 2>&1 | ForEach-Object { [string]$_ }
+    } | Out-String
     if ($LASTEXITCODE -ne 0 -or -not $ver.Trim()) {
         throw "claude.exe from $usbClaude produced no version output (exit $LASTEXITCODE)."
     }

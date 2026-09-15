@@ -108,9 +108,21 @@ Write-Host ''
 Write-Host '  [S] Skip the backup entirely' -ForegroundColor DarkYellow
 Write-Host ''
 
+$emptyReads = 0
 while ($true) {
-    $answer = Read-Host '  Selection'
+    $answer = [string](Read-Host '  Selection')
     $answer = $answer.Trim()
+    # Read-Host returns $null/'' when stdin is at EOF (kit launched with a
+    # redirected or closed input while UserInteractive is still true); do not
+    # spin forever, and never fall through to a relative '\RepairKitBackups'.
+    if (-not $answer) {
+        $emptyReads++
+        if ($emptyReads -ge 3) {
+            Write-Warning 'No input available — treating as "skip the backup". Pass -BackupDestination to Start-Repair.ps1 for an unattended run.'
+            return $null
+        }
+        continue
+    }
 
     if ($answer -match '^[Ss]$') {
         Write-Host ''
@@ -135,6 +147,7 @@ while ($true) {
     }
 
     $destination = Join-Path "$($chosen.DeviceID)\" 'RepairKitBackups'
+    if (-not [System.IO.Path]::IsPathRooted($destination)) { Write-Host '  Not a valid selection.' -ForegroundColor Red; continue }
     Write-Host "  Backing up to: $destination" -ForegroundColor Green
     Write-Host ''
     return $destination

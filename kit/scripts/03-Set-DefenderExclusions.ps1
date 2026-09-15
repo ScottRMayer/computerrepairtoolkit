@@ -37,28 +37,69 @@ $pathsToExclude = @(
     (Join-Path $KitRoot 'scripts')
 )
 
+# What this script actually did, for the launcher (session-context.json) and
+# the report card — "added" is not assumed, it is recorded.
+$statePath = Join-Path $KitRoot 'state\defender-exclusions.json'
+function Write-ExclusionState([string[]]$Present, [string[]]$Failed) {
+    try {
+        New-Item -ItemType Directory -Path (Split-Path -Parent $statePath) -Force | Out-Null
+        [ordered]@{ written_at = (Get-Date -Format 'o'); mode = $(if ($Remove) { 'remove' } else { 'add' }); present = @($Present); failed = @($Failed) } |
+            ConvertTo-Json -Depth 3 | Set-Content -Path $statePath -Encoding UTF8
+    } catch { }
+}
+
 $cmdletName = if ($Remove) { 'Remove-MpPreference' } else { 'Add-MpPreference' }
 if (-not (Get-Command $cmdletName -ErrorAction SilentlyContinue)) {
     Write-KitLog -LogPath $LogPath -Level WARN -Message "$cmdletName not available (Defender PowerShell module missing) — skipping. Continuing regardless."
+    Write-ExclusionState @() @()
     exit 0
 }
 
-foreach ($path in $pathsToExclude) {
-    try {
-        if ($Remove) {
+function Get-CurrentExclusions {
+    try { return @((Get-MpPreference -ErrorAction Stop).ExclusionPath | Where-Object { $_ }) } catch { return $null }
+}
+
+$failed = @()
+if ($Remove) {
+    # Only remove what is actually there: Remove-MpPreference on a path that
+    # was never added errors, and that error used to be reported as "the
+    # machine may be left with a standing exclusion" — the opposite of the truth.
+    $current = Get-CurrentExclusions
+    foreach ($path in $pathsToExclude) {
+        $present = ($null -eq $current) -or (@($current | Where-Object { $_ -ieq $path }).Count -gt 0)
+        if (-not $present) {
+            Write-KitLog -LogPath $LogPath -Message "No Defender exclusion for $path was present; nothing to remove."
+            continue
+        }
+        try {
             Remove-MpPreference -ExclusionPath $path -ErrorAction Stop
             Write-KitLog -LogPath $LogPath -Message "Removed Defender exclusion: $path"
-        } else {
-            Add-MpPreference -ExclusionPath $path -ErrorAction Stop
-            Write-KitLog -LogPath $LogPath -Message "Excluded from Defender scanning: $path"
-        }
-    } catch {
-        $verb = if ($Remove) { 'remove' } else { 'add' }
-        Write-KitLog -LogPath $LogPath -Level WARN -Message "Could not $verb Defender exclusion for '$path': $_"
-        if ($Remove) {
-            Write-KitLog -LogPath $LogPath -Level WARN -Message "This machine may be left with a standing exclusion for '$path'. Remove it by hand: Remove-MpPreference -ExclusionPath '$path'"
+        } catch {
+            Write-KitLog -LogPath $LogPath -Level WARN -Message "Could not remove Defender exclusion for '$path': $_"
         }
     }
+    $after = Get-CurrentExclusions
+    $standing = @()
+    if ($null -ne $after) {
+        $standing = @($pathsToExclude | Where-Object { $p = $_; @($after | Where-Object { $_ -ieq $p }).Count -gt 0 })
+    }
+    foreach ($p in $standing) {
+        Write-KitLog -LogPath $LogPath -Level WARN -Message "This machine is left with a standing Defender exclusion for '$p'. Remove it by hand: Remove-MpPreference -ExclusionPath '$p'"
+    }
+    Write-ExclusionState $standing @()
+} else {
+    $added = @()
+    foreach ($path in $pathsToExclude) {
+        try {
+            Add-MpPreference -ExclusionPath $path -ErrorAction Stop
+            Write-KitLog -LogPath $LogPath -Message "Excluded from Defender scanning: $path"
+            $added += $path
+        } catch {
+            Write-KitLog -LogPath $LogPath -Level WARN -Message "Could not add Defender exclusion for '$path': $_ (a bundled tool may get quarantined mid-run)"
+            $failed += $path
+        }
+    }
+    Write-ExclusionState $added $failed
 }
 
 exit 0
