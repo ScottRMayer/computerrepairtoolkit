@@ -107,3 +107,115 @@ function Import-KitAuthEnv {
     }
     return $true
 }
+
+function ConvertTo-ArgumentString {
+    <#
+    .SYNOPSIS
+        Joins an argument array into ONE command line with Windows quoting
+        rules, for Start-Process -ArgumentList.
+
+        Windows PowerShell 5.1's Start-Process joins an -ArgumentList array
+        with plain spaces and does not quote elements, so a prompt like
+        "Diagnose and repair this machine" would reach the child as five
+        separate arguments. This quotes any element containing whitespace
+        or a double quote, escaping embedded quotes the CommandLineToArgvW
+        way (\") that Node/Bun-based binaries such as claude.exe parse.
+    #>
+    param([string[]]$Arguments)
+    $quoted = foreach ($a in $Arguments) {
+        if ($null -eq $a) { continue }
+        if ($a -eq '' -or $a -match '[\s"]') {
+            # Escape backslashes that precede a quote, then the quote itself.
+            $escaped = $a -replace '(\\*)"', '$1$1\"'
+            $escaped = $escaped -replace '(\\+)$', '$1$1'
+            '"' + $escaped + '"'
+        } else {
+            $a
+        }
+    }
+    return ($quoted -join ' ')
+}
+
+function Limit-Text {
+    param([string]$Text, [int]$Max = 200)
+    if (-not $Text) { return '' }
+    if ($Text.Length -le $Max) { return $Text }
+    return $Text.Substring(0, $Max - 3) + '...'
+}
+
+function Get-ToolUseSummary {
+    <#
+        One readable line for a stream-json tool_use block, so the operator
+        can see WHAT the agent is doing (not just that it is doing something).
+    #>
+    param($Block)
+    $name = [string]$Block.name
+    $in = $Block.input
+    $detail = $null
+    if ($in) {
+        if ($in.command)        { $detail = [string]$in.command }
+        elseif ($in.file_path)  { $detail = [string]$in.file_path }
+        elseif ($in.pattern)    { $detail = [string]$in.pattern }
+        elseif ($in.description){ $detail = [string]$in.description }
+        else {
+            try { $detail = ($in | ConvertTo-Json -Compress -Depth 3) } catch { $detail = '' }
+        }
+    }
+    $detail = ($detail -replace '\s+', ' ').Trim()
+    if ($detail) { return "running $name`: $(Limit-Text $detail 160)" }
+    return "running $name"
+}
+
+function Format-TranscriptEvent {
+    <#
+    .SYNOPSIS
+        Turns one line of Claude Code's --output-format stream-json
+        transcript into zero or more plain-language progress lines for the
+        console. Anything unparseable is skipped silently — the transcript
+        file itself remains the record.
+    .OUTPUTS
+        [string[]] (possibly empty)
+    #>
+    param([string]$Line)
+    $out = New-Object System.Collections.Generic.List[string]
+    if (-not $Line) { return @() }
+    $trimmed = $Line.Trim()
+    if (-not $trimmed.StartsWith('{')) { return @() }
+    $ev = $null
+    try { $ev = $trimmed | ConvertFrom-Json } catch { return @() }
+    if (-not $ev) { return @() }
+
+    switch ([string]$ev.type) {
+        'system' {
+            if ($ev.subtype -eq 'init') {
+                $model = if ($ev.model) { " (model: $($ev.model))" } else { '' }
+                $out.Add("Assistant session started$model.")
+            }
+        }
+        'assistant' {
+            foreach ($block in @($ev.message.content)) {
+                if ($null -eq $block) { continue }
+                if ($block.type -eq 'text' -and $block.text) {
+                    $t = ([string]$block.text -replace '\s+', ' ').Trim()
+                    if ($t) { $out.Add("  > " + (Limit-Text $t 400)) }
+                } elseif ($block.type -eq 'tool_use') {
+                    $out.Add("  * " + (Get-ToolUseSummary $block))
+                }
+            }
+        }
+        'user' {
+            foreach ($block in @($ev.message.content)) {
+                if ($null -eq $block -or $block.type -ne 'tool_result' -or -not $block.is_error) { continue }
+                $txt = if ($block.content -is [string]) { $block.content }
+                       else { (@($block.content) | ForEach-Object { if ($_.text) { $_.text } }) -join ' ' }
+                $txt = ([string]$txt -replace '\s+', ' ').Trim()
+                if ($txt) { $out.Add("  ! tool error: " + (Limit-Text $txt 240)) }
+            }
+        }
+        'result' {
+            $turns = if ($null -ne $ev.num_turns) { " after $($ev.num_turns) turn(s)" } else { '' }
+            $out.Add("Assistant finished: $($ev.subtype)$turns.")
+        }
+    }
+    return $out.ToArray()
+}

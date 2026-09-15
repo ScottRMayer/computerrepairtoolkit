@@ -17,6 +17,9 @@ HOW TO USE IT
      warning it shows you first.
   4. Walk away. It usually takes 20 to 90 minutes.
      Leave the drive plugged in. Keep a laptop on its charger.
+     The window shows what the assistant is doing as it works,
+     with a "still working" line every minute or so when a long
+     scan is running.
 
   Not sure yet? For a safe first run that only LOOKS and changes nothing,
   right-click Repair-This-PC, and if offered "Run as administrator" say yes,
@@ -44,6 +47,12 @@ IF SOMETHING GOES WRONG
   - If it says it couldn't get online, the repair tools on this
     drive still work by hand. The exact commands are in
     docs\tool-invocations.md.
+  - If it says "SAFETY CHECK FAILED", the built-in guard that limits
+    what the assistant may run did not work on this PC, so it
+    refused to start. Nothing was changed. Tell whoever built the
+    drive.
+  - If it says "SIGN-IN EXPIRED", the drive's saved sign-in needs
+    refreshing on the PC it was built on. Nothing was changed.
 
 
 WHAT IT WON'T DO

@@ -4,7 +4,65 @@
 > first-principles workshop (7 expert lenses → 3 adversarial critics →
 > synthesis). Where anything here conflicts with it, the spec wins.
 
-## Latest pass — Tier-3: the "won't boot" layer
+## Latest pass — code review: defects fixed, gaps closed
+
+A read-through of every script against Windows PowerShell 5.1 semantics and
+the current Claude Code docs found three real defects and several gaps. All
+fixed; every `.ps1` still parses, `test-deny-rules.py` and
+`test-pretooluse-guard.ps1` pass (the latter with new cases).
+
+**Defects:**
+
+- **Restore-point verification could not fail.** `Get-ComputerRestorePoint`
+  returns `CreationTime` as a WMI/DMTF *string*; comparing it to a
+  `DateTime` was a string comparison that passed for any restore point ever
+  made — the exact false-rollback the script exists to prevent. Now
+  converted (with a portable fallback parser), the 24h-throttle override is
+  reverted after use, and the verified point is written to
+  `state\restore-point.json` for the report card and the agent.
+- **The guard hook denied legitimate log reads.** Its UNC rule matched any
+  doubled backslash, so a Bash-tool command spelling a local path as
+  `C:\\Windows\\Logs\\...` was refused as a network path. The pattern now
+  requires a path-token start, still catches escaped UNCs and the
+  `//server/share` spelling, and the test covers all of it.
+- **The guard hook was wired to fail open.** The settings used cmd-style
+  `%CLAUDE_PROJECT_DIR%` in a command that Claude Code runs under Git Bash or
+  PowerShell (neither expands it), and a hook that can't start exits 1, which
+  the harness documents as *non-blocking*. Rewired in exec form
+  (`command` + `args`, placeholder substituted with no shell), wrapped so a
+  missing/crashing script exits 2, and the guard itself now denies with exit
+  code 2 (the only signal honoured under bypass mode) plus the reason JSON.
+
+**Gaps closed in the launcher:**
+
+- Pre-launch self-test: one Haiku call from a scratch directory proves the
+  credential (exit 5 with a rebuild message if rejected) *and* that the guard
+  blocks a canary command on this machine (exit 4 if it demonstrably ran).
+- Connectivity findings (hosts hijack, WinINET proxy, DNS changes) now reach
+  the agent via `session-context.json` and the report card; they were only
+  in the launcher log.
+- Live progress: the transcript is tailed to the console (assistant text,
+  tool calls, errors, a heartbeat) instead of a blank window for 90 minutes.
+- Stale state from a previous run (`repair-summary.json`, flags) is cleared
+  at start, so last run's findings can't appear on this run's report card.
+- Backup resolves OneDrive Known Folder Move via `User Shell Folders` and
+  `OneDrive*` scans, skips/lists cloud-only placeholders, reconciles bytes
+  landed vs. measured (robocopy exit 0 on an empty stub no longer counts),
+  writes `state\backup-result.json`, and defaults to the *signed-in* user
+  rather than the admin who clicked the UAC prompt.
+- Start-Process argument quoting (5.1 does not quote array elements, so the
+  prompt was being split); env scrub extended to Bedrock/Vertex/Foundry and
+  model overrides; the watchdog's `--resume` carries the injection policy
+  and has its own cap; `Repair-This-PC.cmd` passes arguments through
+  elevation and explains exit codes 4 and 5.
+
+**Doc corrections:** Claude Code on Windows has a dedicated PowerShell tool
+(Git Bash optional), so the `PowerShell(...)` rules are meaningful; hooks in
+project settings do run in `-p` mode without workspace trust; `--session-id`
+is not in the public CLI reference (still relied on — checklist 9c);
+whitelist count is 31, not 23.
+
+## Earlier pass — Tier-3: the "won't boot" layer
 
 Closes the kit's biggest structural gap (it only worked on a machine that
 already boots):
@@ -175,6 +233,18 @@ follows from documented CLI/OS behavior, not a live test.
   NirSoft) should be confirmed with `--help` on the build machine before a
   real repair — a wrong switch either does nothing or does something
   unintended, unattended.
+- **`--session-id`** is used by the launcher for the watchdog `--resume` but
+  is not in the public CLI reference. The first real dry-run accepted it;
+  checklist 9c is where a regression would show.
+- **Exec-form hooks** (`command` + `args`) are what the current docs
+  describe; if the shipped `claude.exe` rejects that shape in `claude
+  doctor`, fall back to a single command string with `$CLAUDE_PROJECT_DIR`
+  (checklist 9b).
+- **The pre-launch canary's readings are inferred**: it looks for the
+  guard's `[PreToolUse guard]` text in the transcript. Whether the harness
+  includes the deny reason in the stream-json tool result is documented but
+  unconfirmed on hardware; an `inconclusive` verdict on a real run means
+  read `logs\preflight-*.jsonl` and adjust the detection.
 - Windows 10 Safe Mode allowlist unverified — all findings are from Windows
   11 25H2 (see [`docs/safe-mode-constraints.md`](safe-mode-constraints.md)).
 - `winget` availability in Safe Mode is still inference, not confirmed.
@@ -224,13 +294,10 @@ follows from documented CLI/OS behavior, not a live test.
 
 ## Considered and deliberately not done
 
-- **A blocking `PreToolUse` hook** to enforce the tool whitelist positively
-  rather than as a blocklist. Works under `bypassPermissions` (exit code 2
-  blocks a call before permission rules are evaluated) and wouldn't reduce
-  autonomy. The deny list covers the catastrophic verbs; the hook is what
-  would close the path-based gaps described in
-  [`docs/decisions.md`](decisions.md). Revisit if those gaps matter in
-  practice.
+- **A *positive-allowlist* `PreToolUse` hook** (as opposed to the
+  argument-aware *deny* hook that ships). A name allowlist is defeated by
+  `powershell -c "<verb>"` wrappers, where the command name is just
+  `powershell` — see [`docs/decisions.md`](decisions.md).
 - **`bcdedit`, `Set-Partition`, `Clear-RecycleBin` in the deny list** —
   excluded because each has a plausible repair use. See
   [`docs/decisions.md`](decisions.md).

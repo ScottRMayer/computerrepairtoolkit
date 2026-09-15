@@ -34,12 +34,19 @@ nowhere else.
    ```
    claude -p "<repair playbook prompt>" --dangerously-skip-permissions
    ```
-5. Claude Code reads `CLAUDE.md` from the USB (the bundled instructions file
+5. Before handing off, the launcher makes one cheap model call that proves
+   the saved credential works **and** that the command guard actually blocks
+   a forbidden command on this machine. A rejected credential or an inert
+   guard stops the run with its own exit code instead of a confusing turn-0
+   failure.
+6. Claude Code reads `CLAUDE.md` from the USB (the bundled instructions file
    — see below) plus the session context, creates a restore point, runs
    system inventory, and works through diagnosis and repair unattended using
-   only the whitelisted tools.
-6. The full run is transcript-logged to the USB, not the target machine, and
-   the Defender exclusions are removed again on the way out.
+   only the whitelisted tools. The console shows plain-language progress
+   tailed from the transcript while it works.
+7. The full run is transcript-logged to the USB, not the target machine, and
+   the Defender exclusions are removed again on the way out. A report card
+   (`reports\RepairReport-<timestamp>.html`) summarises the outcome.
 
 **Claude Code's `--dangerously-skip-permissions` bypass is a real bypass —
 a small set of hard-coded refusals survive it, but everything else runs
@@ -71,5 +78,6 @@ repair).
 
 A broader survey of repair/diagnostic tools (including scams to avoid) lives
 at the published artifact referenced in [`docs/decisions.md`](docs/decisions.md).
-This repo implements the 23-tool whitelist drawn from that survey, not the
-full survey itself.
+This repo implements the 31-entry whitelist in
+[`docs/tool-whitelist.md`](docs/tool-whitelist.md), drawn from that survey,
+not the full survey itself.

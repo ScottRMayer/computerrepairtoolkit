@@ -21,8 +21,16 @@ if %errorlevel% neq 0 (
     echo   Asking for administrator permission...
     echo   Click YES on the prompt that appears.
     echo.
-    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "Start-Process -FilePath '%~f0' -Verb RunAs"
+    REM Re-launch elevated. Any arguments given to this .cmd (e.g.
+    REM -RepairMode Check, -BackupMode Skip) are carried across the
+    REM elevation boundary; without this they were silently dropped.
+    if "%~1"=="" (
+        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+            "Start-Process -FilePath '%~f0' -Verb RunAs"
+    ) else (
+        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+            "Start-Process -FilePath '%~f0' -ArgumentList '%*' -Verb RunAs"
+    )
     exit /b
 )
 
@@ -51,6 +59,20 @@ if %EXITCODE%==0 (
     echo   The repair assistant needs an internet connection to think.
     echo   The tools on this drive still work by hand - see
     echo   docs\tool-invocations.md for the exact commands.
+) else if %EXITCODE%==4 (
+    echo   ==========================================
+    echo     COULD NOT START - SAFETY CHECK FAILED
+    echo   ==========================================
+    echo   The command guard that limits what the assistant may run did
+    echo   not block a test command on this PC, so the repair was not
+    echo   started. See the logs folder; nothing on the PC was changed.
+) else if %EXITCODE%==5 (
+    echo   ==========================================
+    echo     COULD NOT START - SIGN-IN EXPIRED OR INVALID
+    echo   ==========================================
+    echo   The drive's saved sign-in for the repair assistant was rejected.
+    echo   Rebuild the drive on your own PC (see BUILD.md) to refresh it.
+    echo   Nothing on this PC was changed.
 ) else (
     echo   ==========================================
     echo     STOPPED EARLY - see the messages above

@@ -128,7 +128,7 @@ Get-ChildItem -Path (Join-Path $RepoRoot 'kit\config') -File |
     Where-Object { $_.Name -ne 'auth.env' } |
     ForEach-Object { Copy-Item -Path $_.FullName -Destination $destConfigDir -Force }
 
-foreach ($dir in @('state\.claude', 'logs', 'backups', 'iso')) {
+foreach ($dir in @('state\.claude', 'logs', 'backups', 'reports', 'iso')) {
     New-Item -ItemType Directory -Path (Join-Path $UsbRoot $dir) -Force | Out-Null
 }
 

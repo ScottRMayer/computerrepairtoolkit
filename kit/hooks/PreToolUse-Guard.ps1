@@ -13,17 +13,26 @@
     allowed to run (reg, Set-ItemProperty, a download cmdlet) pointed at a
     security-critical target.
 
-    Contract (Claude Code hooks): reads a JSON event on stdin with tool_name
-    and tool_input; to BLOCK, prints a permissionDecision:"deny" object and
-    exits 0. Silence + exit 0 means "no opinion" — normal permission
-    evaluation (including the deny rules) then proceeds. This hook only ever
-    DENIES or stays silent; it never emits "allow" (which would wrongly
-    short-circuit ask rules).
+    Contract (Claude Code hooks, https://code.claude.com/docs/en/hooks):
+    reads a JSON event on stdin with tool_name and tool_input. To BLOCK, it
+    prints a permissionDecision:"deny" object on stdout, the reason on
+    stderr, and exits 2. Exit 2 blocks the call regardless of permission
+    mode and regardless of how the JSON is interpreted, and the harness
+    shows the JSON's permissionDecisionReason as the blocking message —
+    so both channels are used deliberately. (A deny signalled by exit 0
+    plus JSON alone is documented for the normal permission flow; under
+    bypassPermissions only exit 2 is unambiguous.) Silence + exit 0 means
+    "no opinion" — normal permission evaluation (including the deny rules)
+    then proceeds. This hook only ever DENIES or stays silent; it never
+    emits "allow" (which would wrongly short-circuit ask rules).
 
-    FAIL-CLOSED: any parse error, or a shell command we cannot read, is
-    denied — because a guard that fails open on malformed input is not a
-    guard. (Note: the harness fails a hook *timeout* open; we cannot change
-    that, so keep this fast and dependency-free.)
+    FAIL-CLOSED: any parse error, any uncaught exception (the trap below),
+    or a shell command we cannot read, is denied — because a guard that
+    fails open on malformed input is not a guard. The settings.json wiring
+    additionally wraps this file so that a missing/unreadable script also
+    exits 2 (any exit code other than 2 is NON-blocking per the docs).
+    (Note: the harness fails a hook *timeout* open; we cannot change that,
+    so keep this fast and dependency-free.)
 
     This is defense in depth, not a sandbox. A child process the agent spawns
     is still unconstrained on native Windows — least privilege does what no
@@ -32,7 +41,16 @@
 
 $ErrorActionPreference = 'Stop'
 
+# Any error this script did not anticipate must block, not fall through.
+trap {
+    try { [Console]::Error.WriteLine("PreToolUse guard hit an unexpected error and is blocking as a precaution: $_") } catch { }
+    exit 2
+}
+
 function Deny([string]$reason) {
+    # Uniform prefix: the launcher counts denials in the transcript and the
+    # pre-launch canary looks for it, so every reason must carry it.
+    $reason = "[PreToolUse guard] $reason"
     $out = @{
         hookSpecificOutput = @{
             hookEventName          = 'PreToolUse'
@@ -41,7 +59,8 @@ function Deny([string]$reason) {
         }
     }
     $out | ConvertTo-Json -Depth 5 -Compress
-    exit 0
+    [Console]::Error.WriteLine($reason)
+    exit 2
 }
 
 function Allow { exit 0 }   # stay silent; let deny rules + mode decide
@@ -101,7 +120,18 @@ $rules = @(
     # UNC / WebDAV network paths — per the documented Windows WebDAV warning,
     # a \\host\ path can trigger outbound network access that sidesteps the
     # permission system. Device paths \\?\ and \\.\ are allowed.
-    @{ Re = '\\\\(?![?.])[A-Za-z0-9._-]+\\';                           Why = 'Accessing a UNC network path (\\server\share) is blocked — on Windows it can trigger WebDAV requests that bypass the permission system. Local device paths (\\?\, \\.\) are fine.' }
+    #
+    # The leading run must start a path token: the lookbehind refuses a match
+    # when the backslashes are preceded by a drive colon, a path character or
+    # another backslash, because a Bash-tool command routinely spells a LOCAL
+    # path with escaped separators ("C:\\Windows\\Logs\\CBS\\CBS.log") and the
+    # naive pattern denied every such read as a "UNC path". An escaped UNC
+    # ("\\\\server\\share", four leading backslashes) is still caught by the
+    # optional second pair. The forward-slash spelling (//server/share) that
+    # Git Bash accepts is matched separately; "http://host/" is excluded by
+    # the colon in the lookbehind.
+    @{ Re = '(?<![A-Za-z0-9_:\\])\\{2}(?:\\{2})?(?![?.])[A-Za-z0-9._-]+\\';  Why = 'Accessing a UNC network path (\\server\share) is blocked — on Windows it can trigger WebDAV requests that bypass the permission system. Local device paths (\\?\, \\.\) are fine.' }
+    @{ Re = '(?<![A-Za-z0-9_:/.])//(?![?.])[A-Za-z0-9._-]+/';                Why = 'Accessing a UNC network path (//server/share) is blocked — on Windows it can trigger WebDAV requests that bypass the permission system.' }
 )
 
 foreach ($r in $rules) {

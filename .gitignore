@@ -10,6 +10,7 @@ kit/iso/
 kit/state/
 kit/logs/
 kit/backups/
+kit/reports/
 
 # Windows ISOs / WIMs are large binaries that don't belong in git
 *.iso

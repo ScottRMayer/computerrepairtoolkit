@@ -67,8 +67,23 @@ Rules, without exception:
 1. **Read `state\session-context.json`.** The launcher wrote it before
    handing off to you. It tells you the boot mode, whether the session is
    elevated, and — critically — whether a user-data backup was taken, where
-   it went, and which profiles it covered. Everything below depends on what
-   it says. Do not assume a backup exists; read the file.
+   it went, whether it was **verified** (bytes actually landed), and which
+   profiles it covered. Everything below depends on what it says. Do not
+   assume a backup exists; read the file. It also carries:
+   - `connectivity` — what the launcher had to fix to get this machine
+     online (`findings`). A hosts-file redirect or a hidden WinINET proxy
+     listed there is **evidence of a browser hijack or malware**: treat it as
+     a finding, include it in your summary, and do not undo those fixes —
+     they are your own uplink. More generally, make connectivity-affecting
+     changes last, and never one that could sever your own connection
+     mid-run.
+   - `preflight` — whether the launcher proved the command guard blocks a
+     forbidden command on this machine (`hook: verified`). If it says
+     `inconclusive`, the guard is still wired but unproven; nothing changes
+     for you — stay inside the whitelist regardless.
+   - `state_files` — the paths of the small JSON files the pipeline scripts
+     write (`restore-point.json`, `backup-result.json`) and the ones you
+     write (`repair-summary.json`, `backup-needs-scan.flag`).
 2. Confirm you are running from the USB kit root (this file, `scripts\`,
    `tools\`, `config\` should all be siblings of wherever you were invoked).
    If they aren't, stop — you are not running the kit correctly and should
@@ -84,9 +99,15 @@ The user-data backup is **not yours to run** — it needs a human to choose a
 destination drive, so the launcher handles it before you start. Your job is
 to know what state it left things in, from `state\session-context.json`:
 
-- **`backup.completed: true`** — user files are copied to
-  `backup.destination`. Note the path in your final summary so whoever
-  reads it knows where their files went.
+- **`backup.completed: true`** and **`backup.verified: true`** — user files
+  are copied to `backup.destination` (`backup.bytes_copied` bytes landed).
+  Note the path in your final summary so whoever reads it knows where their
+  files went. If `backup.cloud_only_files` is non-zero, that many OneDrive
+  online-only files were **not** copied (they are not on this disk; they
+  remain in the cloud) — say so in the summary, and treat anything under a
+  cloud-sync folder (`OneDrive*`, `Dropbox`, `Google Drive`) as
+  **quarantine-only, never delete**: a local delete there replicates to
+  every device the family signed in on.
 - **`backup.completed: false`** or **`backup.requested: false`** — there is
   **no file-level safety net this session**. The restore point (step 2) is
   the only rollback available, and it explicitly does not cover documents,
@@ -108,7 +129,10 @@ was made in the last 24 hours **and still reports success**, which would
 otherwise leave you believing you have a rollback path you don't have. The
 script verifies the restore point actually appears in
 `Get-ComputerRestorePoint` afterward and reports failure if it doesn't —
-trust that verification, not just the exit code.
+trust that verification, not just the exit code. On success it writes
+`state\restore-point.json` with the restore point's description and sequence
+number; that is the value to put in `restore_point` in your final summary
+(and `null` if the file says `verified: false` or does not exist).
 
 If `boot_mode` is anything else (`Minimal` or `Network`), **do not attempt
 `Checkpoint-Computer`** — it fails by design in Safe Mode (VSS isn't in the
@@ -248,8 +272,9 @@ inspects each shell command and hard-blocks a few argument patterns that are
 never part of a repair: agent-initiated downloads / `iex` (the kit fetches
 nothing at repair time), disabling Defender or adding Defender exclusions,
 writing IFEO / Winlogon / LSA / Run persistence keys, `bcdedit /delete`, and
-UNC network paths. These fail the call — they are not prompts and not bugs to
-route around. If you hit one, it means the action is out of scope: record it
+UNC network paths. A blocked call comes back as an error whose message starts
+with `[PreToolUse guard]` and names the rule. These fail the call — they are
+not prompts and not bugs to route around. If you hit one, it means the action is out of scope: record it
 and move on, or note it under "needs a person." Reading any of these
 (enumerating Run keys, reading Defender status) is fine — only the dangerous
 writes/fetches are blocked.
@@ -346,7 +371,7 @@ honestly and in language a non-technical person understands. Exact shape:
   "what_i_changed": ["each change, undoably specific"],
   "needs_a_person": ["anything a human must still do — new hardware, a reboot, a decision"],
   "reboot_required": true,
-  "restore_point": "the restore-point name if one was created, else null",
+  "restore_point": "the description from state\\restore-point.json if it says verified: true, else null",
   "backup_path": "the backup destination from session-context.json, or null"
 }
 ```

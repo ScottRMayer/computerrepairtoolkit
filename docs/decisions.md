@@ -145,10 +145,31 @@ These are settled. Don't re-pitch them.
   either the deny rules or the tool whitelist. It already caught one real
   false positive — `Bash(rm -rf /*)` matched `rm -rf /tmp/scratch`.
 
-  Not implemented: a `PreToolUse` hook (exit code 2 blocks a call before
-  permission rules are even evaluated), which is the robust way to enforce
-  the whitelist *positively* rather than as a blocklist. Worth revisiting if
-  the path-based gaps above ever matter in practice.
+  Alongside it, an **argument-aware `PreToolUse` guard**
+  ([`kit/hooks/PreToolUse-Guard.ps1`](../kit/hooks/PreToolUse-Guard.ps1))
+  denies the "living off the allowlist" class the string rules cannot
+  express — agent-initiated downloads, Defender tampering, persistence-key
+  writes, `bcdedit /delete`, UNC paths. It is a *deny* hook, not a positive
+  allowlist (a name-allowlist is defeated by `powershell -c "<verb>"`
+  wrappers, where the command name is just `powershell`). Three properties
+  make it a real control rather than a hope:
+  - It blocks with **exit code 2** (plus the deny JSON for the reason), the
+    one signal the harness honours regardless of permission mode; any other
+    non-zero exit is documented as non-blocking.
+  - It is wired in **exec form** (`command` + `args`) in
+    `kit/.claude/settings.json`, so no shell re-parses the line, and the
+    wrapper turns a missing or crashing script into exit 2 too — it fails
+    closed, not open.
+  - The launcher **proves it** before every run: one Haiku call from a
+    scratch directory asks the model to run a harmless `Invoke-WebRequest`
+    to a closed local port; the guard's denial must appear in the
+    transcript, or the run stops with exit code 4. (Hooks in a project
+    settings file do run in a `claude -p` session even when the folder was
+    never trusted — verified against the Claude Code docs — but "documented
+    to run" and "ran on this machine" are different claims, and the second
+    is the one that matters.)
+  A positive allowlist hook remains not implemented, for the wrapper reason
+  above.
 
 - **Treat the USB as contaminated after touching a compromised machine.**
   It's a cross-machine propagation path — scan it before reuse, or use a

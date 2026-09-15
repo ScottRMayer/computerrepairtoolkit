@@ -8,10 +8,15 @@
 .DESCRIPTION
     Reads, all best-effort (any missing input degrades to a clear note, never
     an error):
-      - state\session-context.json    what the launcher did (backup, boot mode)
+      - state\session-context.json    what the launcher did (backup, boot mode,
+                                       connectivity fixes, pre-launch self-test)
       - state\repair-summary.json      what the AGENT did (it writes this as its
                                        last step, per CLAUDE.md)
+      - state\restore-point.json       what 01-New-RestorePoint.ps1 verified
+      - state\backup-result.json       what 00-Backup-UserData.ps1 reconciled
       - state\backup-needs-scan.flag   malware-found-so-scan-the-backup warning
+    The launcher deletes all of these at the start of a run, so nothing here
+    can be left over from a previous session.
     Emits reports\RepairReport-<timestamp>.html and returns its path. Opens it
     in the default browser when the session is interactive.
 
@@ -36,6 +41,8 @@ function Read-JsonSafe {
 
 $ctx     = Read-JsonSafe (Join-Path $KitRoot 'state\session-context.json')
 $summary = Read-JsonSafe (Join-Path $KitRoot 'state\repair-summary.json')
+$rpState = Read-JsonSafe (Join-Path $KitRoot 'state\restore-point.json')
+$bkState = Read-JsonSafe (Join-Path $KitRoot 'state\backup-result.json')
 $scanFlag = Join-Path $KitRoot 'state\backup-needs-scan.flag'
 $scanWarn = if (Test-Path $scanFlag) { (Get-Content $scanFlag -Raw -ErrorAction SilentlyContinue) } else { $null }
 
@@ -68,25 +75,32 @@ $transcriptTail = if (-not $summary) { Get-TranscriptFinalMessage } else { $null
 # Launcher exit code is authoritative for "did it even run"; the agent's
 # self-reported outcome refines a run that completed.
 $outcome = if ($ExitCode -eq 3) { 'offline' }
+           elseif ($ExitCode -eq 4) { 'guard_failed' }
+           elseif ($ExitCode -eq 5) { 'auth_failed' }
+           elseif ($ExitCode -eq 2) { 'timeout' }
            elseif ($ExitCode -ne 0) { 'stopped' }
            elseif ($summary -and $summary.outcome) { $summary.outcome }
            else { 'unknown' }
 
 $badge = switch ($outcome) {
-    'fixed'        { @{ text = 'Repairs completed';                 color = '#1a7f37'; bg = '#e6f4ea' } }
-    'partial'      { @{ text = 'Some repairs done - more needed';   color = '#9a6700'; bg = '#fff8e1' } }
-    'needs_person' { @{ text = 'Needs a person';                    color = '#9a6700'; bg = '#fff8e1' } }
-    'nothing_found'{ @{ text = 'Checked - nothing to fix';          color = '#1a7f37'; bg = '#e6f4ea' } }
-    'offline'      { @{ text = "Couldn't start - no internet";      color = '#b42318'; bg = '#fdecea' } }
-    'stopped'      { @{ text = 'Stopped early';                     color = '#b42318'; bg = '#fdecea' } }
-    default        { @{ text = 'Finished - see details';            color = '#57606a'; bg = '#f0f1f2' } }
+    'fixed'        { @{ text = 'Repairs completed';                        color = '#1a7f37'; bg = '#e6f4ea' } }
+    'partial'      { @{ text = 'Some repairs done - more needed';          color = '#9a6700'; bg = '#fff8e1' } }
+    'needs_person' { @{ text = 'Needs a person';                           color = '#9a6700'; bg = '#fff8e1' } }
+    'nothing_found'{ @{ text = 'Checked - nothing to fix';                 color = '#1a7f37'; bg = '#e6f4ea' } }
+    'offline'      { @{ text = "Couldn't start - no internet";             color = '#b42318'; bg = '#fdecea' } }
+    'guard_failed' { @{ text = "Couldn't start - safety check failed";     color = '#b42318'; bg = '#fdecea' } }
+    'auth_failed'  { @{ text = "Couldn't start - sign-in expired";         color = '#b42318'; bg = '#fdecea' } }
+    'timeout'      { @{ text = 'Stopped at the time limit - partly done';  color = '#9a6700'; bg = '#fff8e1' } }
+    'stopped'      { @{ text = 'Stopped early';                            color = '#b42318'; bg = '#fdecea' } }
+    default        { @{ text = 'Finished - see details';                   color = '#57606a'; bg = '#f0f1f2' } }
 }
 
-function E([string]$s) { if ($null -eq $s) { return '' } [System.Web.HttpUtility]::HtmlEncode($s) }
-# HttpUtility may be unavailable; fall back to a manual encoder.
+# Everything machine- or agent-derived is HTML-encoded: this page renders
+# attacker-authored strings (file names, findings) and must not become an
+# HTML/script injection surface. Manual encoder so System.Web isn't needed.
 function Enc([string]$s) {
     if ($null -eq $s) { return '' }
-    return ($s -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;')
+    return ($s -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '"','&quot;')
 }
 
 function List([object[]]$items, [string]$emptyText) {
@@ -100,20 +114,53 @@ $bootMode = if ($ctx) { $ctx.boot_mode } else { 'unknown' }
 
 # --- Backup + rollback facts (from the launcher, not the agent) -----------
 $backupLine = if ($ctx -and $ctx.backup -and $ctx.backup.completed) {
-    "A copy of the files was saved to <b>$(Enc $ctx.backup.destination)</b> (covering: $(Enc $ctx.backup.scope))."
+    $sizeNote = if ($bkState -and $bkState.copied_bytes) { (" ({0:N1} GB)" -f ([double]$bkState.copied_bytes / 1GB)) } else { '' }
+    $cloudNote = if ($bkState -and $bkState.cloud_only_files -gt 0) {
+        " <b>$($bkState.cloud_only_files)</b> online-only cloud file(s) were not copied because they were not on this PC; they are still in the cloud (list: cloud-only-files.txt inside the backup)."
+    } else { '' }
+    "A copy of the files was saved to <b>$(Enc $ctx.backup.destination)</b>$sizeNote (covering: $(Enc $ctx.backup.scope)).$cloudNote"
 } elseif ($ctx -and $ctx.backup -and $ctx.backup.requested -eq $false) {
     "<b>No file backup was taken this session</b> (it was skipped)."
+} elseif ($ctx -and $ctx.backup -and $ctx.backup.requested -and -not $ctx.backup.completed) {
+    "<b>The file backup FAILED or could not be verified</b> - do not rely on it. Details are in the logs folder."
 } else {
     "Backup status unknown - check the logs folder."
 }
 
-$rollbackLine = if ($summary -and $summary.restore_point) {
-    "A Windows restore point named <b>$(Enc $summary.restore_point)</b> was created before changes, so the system can be rolled back."
+$rollbackLine = if ($rpState -and $rpState.kind -eq 'system-restore' -and $rpState.verified) {
+    "A Windows restore point named <b>$(Enc $rpState.description)</b> (sequence $(Enc ([string]$rpState.sequence_number))) was created and verified before changes, so the system can be rolled back (System Restore, or rstrui.exe)."
+} elseif ($rpState -and $rpState.kind -eq 'registry-export' -and $rpState.verified) {
+    "Running in Safe Mode, so a normal restore point couldn't be made; registry hives were exported to <b>$(Enc $rpState.path)</b> instead (restorable by hand with reg import)."
+} elseif ($rpState -and -not $rpState.verified) {
+    "<b>No verified restore point exists</b> - the attempt to create one did not produce a restore point. Any change made is not covered by System Restore."
+} elseif ($summary -and $summary.restore_point) {
+    "A Windows restore point named <b>$(Enc $summary.restore_point)</b> was reported by the assistant, but the launcher could not verify it - check the logs folder."
 } elseif ($bootMode -ne 'Normal' -and $bootMode -ne 'unknown') {
-    "Running in Safe Mode, so a normal restore point couldn't be made; registry hives were exported to the backups folder instead."
+    "Running in Safe Mode, so a normal restore point couldn't be made; check the backups folder for a registry export."
 } else {
-    "Restore-point status is in the logs folder."
+    "No restore point was recorded this session - check the logs folder."
 }
+
+# --- What the launcher itself changed before the assistant started --------
+$netFindings = @()
+if ($ctx -and $ctx.connectivity -and $ctx.connectivity.findings) { $netFindings = @($ctx.connectivity.findings) }
+$netBlock = if ($netFindings.Count -gt 0) {
+@"
+    <div class="card">
+      <h2>Network fixes made before the assistant started</h2>
+      <p class="muted">These were needed to get the PC online. Some are worth knowing about: a redirected hosts file or a hidden proxy is a common sign of malware.</p>
+      $(List $netFindings '')
+    </div>
+"@
+} else { '' }
+
+$preflightLine = if ($ctx -and $ctx.preflight -and $ctx.preflight.ran) {
+    switch ([string]$ctx.preflight.hook) {
+        'verified' { 'Before starting, the kit confirmed that its command guard blocks forbidden commands on this PC.' }
+        'inert'    { '<b>The command guard did not block a forbidden test command</b>, so the repair was not started.' }
+        default    { 'The kit could not confirm that its command guard was active on this PC (the built-in deny list still applied). See the logs folder.' }
+    }
+} else { '' }
 
 # --- Compose HTML ---------------------------------------------------------
 $agentBlock = if ($summary) {
@@ -194,7 +241,10 @@ $html = @"
     <h2>Your files &amp; undo</h2>
     <p>$backupLine</p>
     <p>$rollbackLine</p>
+    $(if ($preflightLine) { "<p class='muted'>$preflightLine</p>" })
   </div>
+
+  $netBlock
 
   $agentBlock
 

@@ -43,12 +43,33 @@ target Windows machine — don't confuse edits to one for the other.
 There is no CI here and no Windows machine in this environment. The closest
 thing to a test suite is
 [`docs/verification-checklist.md`](docs/verification-checklist.md), a
-manual procedure to run on real hardware. `pwsh` (PowerShell 7, cross-platform)
-is available in this sandbox and is enough to catch syntax errors via
-`[System.Management.Automation.Language.Parser]::ParseFile()` — do that for
-any `.ps1` change. A clean parse is not enough on its own: it accepts
-malformed `-f` format strings that throw at runtime, so runtime-test any
-format string you touch. It cannot execute Windows-only cmdlets
+manual procedure to run on real hardware.
+
+Three automated checks exist and must pass before any push:
+
+- `python3 scripts/test-deny-rules.py` — the deny list vs. the whitelist.
+- `pwsh -File scripts/test-pretooluse-guard.ps1` — the guard hook's
+  must-deny / must-allow cases (it insists on BOTH the deny JSON and exit
+  code 2, because only exit 2 blocks under bypass mode).
+- A parse of every `.ps1` via
+  `[System.Management.Automation.Language.Parser]::ParseFile()`.
+
+`pwsh` (PowerShell 7, cross-platform) is **not guaranteed to be installed**
+in the sandbox. If `which pwsh` is empty, download the Linux x64 tarball of
+a PowerShell 7 release from GitHub into the scratchpad directory, extract
+it, and `chmod +x pwsh` — it runs without installation. A clean parse is
+not enough on its own: it accepts malformed `-f` format strings that throw
+at runtime, so runtime-test any format string you touch (paste it into
+`pwsh` with sample values). It cannot execute Windows-only cmdlets
 (`Get-CimInstance`, `Add-MpPreference`, `Checkpoint-Computer`, etc.), so a
 clean parse is necessary, not sufficient — nothing here has been
-execution-tested end to end.
+execution-tested end to end. Remember the real target runs **Windows
+PowerShell 5.1**, not 7: no `??`, no `&&`/`||` pipeline chains, no
+ternary, `Start-Process -ArgumentList` does not quote array elements
+(use `ConvertTo-ArgumentString` from `kit/scripts/lib/Common.ps1`), and
+WMI/CIM date fields come back as DMTF strings, not `DateTime`.
+
+Every `.ps1` under `kit/` and `scripts/` is saved as UTF-8 **with BOM**
+(Windows PowerShell 5.1 otherwise misreads non-ASCII characters in the
+scripts). When rewriting a file wholesale, preserve the BOM; check with
+`head -c3 file | od -An -tx1` (expect `ef bb bf`).

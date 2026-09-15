@@ -117,12 +117,26 @@ On native Windows the agent drives PowerShell, so `Format-Volume`,
 `Clear-Disk`, `diskpart`, and `Remove-Item -Recurse -Force` plausibly hit
 none of them. The deny list is what covers that gap.
 
+Which shell tool the agent actually gets matters for rule spelling. Per the
+current Claude Code docs, native Windows has a dedicated **`PowerShell`
+tool** (on by default for claude.ai accounts) *and* the `Bash` tool when Git
+for Windows is installed (Git Bash is optional, not required). Every
+catastrophic verb is therefore written as both a `PowerShell(...)` and a
+`Bash(...)` rule, and the guard hook's matcher is `Bash|PowerShell`.
+
 Neither boundary reintroduces an approval gate — a denied call fails and the
 agent is told so, with no human in the loop. Autonomy is unchanged.
 
-Still available and unused: a `PreToolUse` hook (exit code 2 blocks a call
-before permission rules are evaluated), which could enforce the whitelist
-positively rather than as a blocklist.
+**Enforced, argument-level.** A `PreToolUse` guard hook
+(`kit/hooks/PreToolUse-Guard.ps1`) denies the abuse patterns string rules
+can't express (downloads, Defender tampering, persistence keys, `bcdedit
+/delete`, UNC paths). It blocks with exit code 2 — the one signal honoured
+in every permission mode — is wired in exec form so no shell re-parses it,
+fails closed if it cannot run, and is proven live by the launcher's
+pre-launch canary before every session (exit code 4 if it does not bite).
+See [`docs/decisions.md`](decisions.md). A *positive* allowlist hook is
+still not implemented: `powershell -c "<verb>"` wrappers make the command
+name useless as a gate.
 
 No `--bare`: the kit depends on `CLAUDE.md` auto-loading, and bare mode
 skips it (see [`docs/authentication.md`](authentication.md) for the other
