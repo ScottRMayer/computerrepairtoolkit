@@ -107,13 +107,22 @@ $rules = @(
     # must pass; a bare property-name match denied them.
     @{ Re = '(?i)set-mppreference\b.*-disable';                        Why = 'Disabling Microsoft Defender settings is blocked — that is malware behavior, not repair.' }
     @{ Re = '(?i)(add|set)-mppreference\b.*exclusion';                 Why = 'Adding a Defender exclusion is blocked — it is a common malware-persistence step and is never part of an autonomous repair.' }
-    @{ Re = '(?i)((new|set)-itemproperty|reg(\.exe)?\s+add)\b.*?(disableantispyware|disablerealtimemonitoring|disablebehaviormonitoring|disableioavprotection|disableonaccessprotection|tamperprotection)'; Why = 'Writing a Defender-disabling policy value (DisableAntiSpyware, DisableRealtimeMonitoring, Tamper Protection, ...) is blocked. Removing such a value that malware set is allowed.' }
-    @{ Re = '(?i)\b(sc(\.exe)?\s+(config|stop|delete|pause)|stop-service|set-service|net(\.exe)?\s+stop|psservice(64)?(\.exe)?\s+(stop|setconfig|pause))\b.*?\b(windefend|wdnissvc|wdfilter|wdboot|sense|mpssvc|securityhealthservice)\b'; Why = 'Stopping, pausing or reconfiguring a Defender / firewall / Security Center service is blocked — that is malware behavior, not repair. Querying them is fine.' }
+    # Value-aware: writing Disable* = 1 (or true) is disabling; writing it
+    # back to 0, or removing the value, is how you UNDO what malware did.
+    @{ Re = '(?i)^(?=.*\b(new|set)-itemproperty\b)(?=.*(disableantispyware|disablerealtimemonitoring|disablebehaviormonitoring|disableioavprotection|disableonaccessprotection))(?=.*-value\s+[''"]?(1|0x1|\$true|true)\b)'; Why = 'Writing a Defender-disabling policy value (DisableAntiSpyware, DisableRealtimeMonitoring, ...) is blocked. Setting it back to 0 or removing it is allowed.' }
+    @{ Re = '(?i)^(?=.*\breg(\.exe)?\s+add\b)(?=.*(disableantispyware|disablerealtimemonitoring|disablebehaviormonitoring|disableioavprotection|disableonaccessprotection))(?=.*/d\s+[''"]?(1|0x1)\b)'; Why = 'reg add of a Defender-disabling policy value is blocked. Setting it to 0 or deleting it is allowed.' }
+    @{ Re = '(?i)((new|set)-itemproperty|reg(\.exe)?\s+add)\b.*?tamperprotection';   Why = 'Writing the Defender Tamper Protection value is blocked.' }
+    # The security service must be the verb's ARGUMENT — "sense" is also an
+    # English word, and a comment on a wuauserv restart must not trip this.
+    @{ Re = '(?i)\b(sc(\.exe)?\s+(config|stop|delete|pause)|stop-service|suspend-service|net(\.exe)?\s+stop|psservice(64)?(\.exe)?\s+(stop|setconfig|pause))\s+(-name\s+|-inputobject\s+)?[''"]?(windefend|wdnissvc|wdfilter|wdboot|sense|mpssvc|securityhealthservice)[''"]?(\s|$|;|\||&)'; Why = 'Stopping, pausing or reconfiguring a Defender / firewall / Security Center service is blocked — that is malware behavior, not repair. Querying or re-enabling them is fine.' }
+    @{ Re = '(?i)^(?=.*\bset-service\b)(?=.*[''"\s](windefend|wdnissvc|wdfilter|wdboot|sense|mpssvc|securityhealthservice)\b)(?=.*-startuptype\s+[''"]?disabled\b)'; Why = 'Disabling a Defender / firewall / Security Center service is blocked. Setting it back to Automatic is fine.' }
     @{ Re = '(?i)set-mppreference\b.*tamperprotection|(uninstall|remove)-windowsfeature\b.*defender|dism(\.exe)?\s+.*(/remove-capability|/disable-feature).*defender'; Why = 'Touching Defender Tamper Protection or removing Defender is blocked.' }
 
     # Registry persistence / boot-integrity keys — writing these is an
     # infection technique, not a fix. (Reading/enumerating them is fine.)
-    @{ Re = '(?i)(new|set)-itemproperty.*(image file execution options|\\winlogon\\|\\lsa\\|\\currentversion\\run(once)?\\?)'; Why = 'Writing to IFEO / Winlogon / LSA / Run(Once) registry keys is blocked — these are persistence and privilege targets, not repair surfaces.' }
+    # \b, not a trailing backslash: the classic writes target the key itself
+    # (...\Winlogon -Name Shell, ...\Control\Lsa -Name ...), with no subkey.
+    @{ Re = '(?i)(new|set)-itemproperty.*(image file execution options|\\winlogon\b|\\lsa\b|\\currentversion\\run(once)?\b)'; Why = 'Writing to IFEO / Winlogon / LSA / Run(Once) registry keys is blocked — these are persistence and privilege targets, not repair surfaces.' }
     @{ Re = '(?i)reg(\.exe)?\s+add\s+.*(image file execution options|\\winlogon|\\lsa\b|\\currentversion\\run)'; Why = 'reg add to IFEO / Winlogon / LSA / Run keys is blocked (persistence targets).' }
 
     # Boot configuration destruction — deleting a boot entry can brick the

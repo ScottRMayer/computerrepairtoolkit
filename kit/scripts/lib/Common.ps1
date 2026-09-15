@@ -170,9 +170,10 @@ function ConvertTo-ArgumentString {
         or a double quote, escaping embedded quotes the CommandLineToArgvW
         way (\") that Node/Bun-based binaries such as claude.exe parse.
     #>
-    param([string[]]$Arguments)
-    $quoted = foreach ($a in $Arguments) {
+    param($Arguments)
+    $quoted = foreach ($a in @($Arguments)) {
         if ($null -eq $a) { continue }
+        $a = [string]$a
         if ($a -eq '' -or $a -match '[\s"]') {
             # Escape backslashes that precede a quote, then the quote itself.
             $escaped = $a -replace '(\\*)"', '$1$1\"'
@@ -213,6 +214,40 @@ function Get-ToolUseSummary {
     $detail = ($detail -replace '\s+', ' ').Trim()
     if ($detail) { return "running $name`: $(Limit-Text $detail 160)" }
     return "running $name"
+}
+
+function Get-TranscriptToolResults {
+    <#
+    .SYNOPSIS
+        The tool_result blocks in one stream-json line (type=user), as
+        objects with Text and IsError, or an empty array. Used to recognise a
+        guard denial from the tool RESULT that carries it — never from
+        assistant prose, which may merely mention the guard.
+    #>
+    param([string]$Line)
+    if (-not $Line) { return @() }
+    $trimmed = $Line.Trim()
+    if (-not $trimmed.StartsWith('{') -or $trimmed -notmatch '"tool_result"') { return @() }
+    $ev = $null
+    try { $ev = $trimmed | ConvertFrom-Json } catch { return @() }
+    if (-not $ev -or $ev.type -ne 'user') { return @() }
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($block in @($ev.message.content)) {
+        if ($null -eq $block -or $block.type -ne 'tool_result') { continue }
+        $txt = if ($block.content -is [string]) { $block.content }
+               else { (@($block.content) | ForEach-Object { if ($_.text) { $_.text } }) -join ' ' }
+        $out.Add([pscustomobject]@{ Text = [string]$txt; IsError = [bool]$block.is_error })
+    }
+    return $out.ToArray()
+}
+
+function Test-TranscriptGuardDenial {
+    # $true when this line is a tool RESULT reporting a PreToolUse guard denial.
+    param([string]$Line)
+    foreach ($r in (Get-TranscriptToolResults -Line $Line)) {
+        if ($r.Text -match '\[PreToolUse guard\]') { return $true }
+    }
+    return $false
 }
 
 function Format-TranscriptEvent {

@@ -37,7 +37,13 @@ param(
     [string]$WindowsVolume,
     [string]$SourceWim,
     [switch]$Fix,
-    [string]$LogDir
+    [string]$LogDir,
+
+    # The BitLocker guard below parses manage-bde's ENGLISH output. On a
+    # localized WinPE it cannot tell, and then fails CLOSED (refuses -Fix).
+    # Pass this only when you have confirmed by other means that the volume
+    # is not encrypted, or you hold the recovery key.
+    [switch]$IgnoreBitLockerCheck
 )
 
 $ErrorActionPreference = 'Continue'
@@ -81,16 +87,38 @@ Say "Target Windows volume: $winVol"
 # --- BitLocker guard ------------------------------------------------------
 # Touching an encrypted volume offline can trigger a recovery-key prompt on
 # next boot. Refuse to make changes to a locked volume without the key.
+$bitlockerState = 'unknown'
 try {
     $mb = (& manage-bde -status $winVol 2>&1 | Out-String)
     if ($mb -match 'Percentage Encrypted\s*:\s*(?!0\.0)') {
+        $bitlockerState = 'encrypted'
+    } elseif ($mb -match 'Percentage Encrypted\s*:\s*0\.0') {
+        $bitlockerState = 'clear'
+    } else {
+        # No English "Percentage Encrypted" line at all: localized WinPE, or
+        # manage-bde absent. We cannot tell — treat as encrypted.
+        $bitlockerState = 'unknown'
+    }
+} catch { $bitlockerState = 'unknown' }
+
+switch ($bitlockerState) {
+    'encrypted' {
         Say "Volume $winVol appears BitLocker-encrypted. Offline changes can force a recovery-key prompt at next boot." 'WARN'
-        if ($Fix) {
+        if ($Fix -and -not $IgnoreBitLockerCheck) {
             Say "Refusing to modify an encrypted volume without confirmation of the recovery key. Unlock it first (manage-bde -unlock) or run assessment-only. Aborting fixes." 'ERROR'
             exit 2
         }
     }
-} catch { Say "Could not query BitLocker state ($_). Proceeding with caution." 'WARN' }
+    'unknown' {
+        Say "Could not determine the BitLocker state of $winVol (manage-bde unavailable or non-English output). Failing CLOSED: treating it as encrypted." 'WARN'
+        if ($Fix -and -not $IgnoreBitLockerCheck) {
+            Say "Refusing to modify a volume whose encryption state is unknown. Confirm it is not BitLocker-protected, then re-run with -IgnoreBitLockerCheck. Aborting fixes." 'ERROR'
+            exit 2
+        }
+    }
+    default { Say "BitLocker: $winVol is not encrypted." }
+}
+if ($IgnoreBitLockerCheck -and $bitlockerState -ne 'clear') { Say "-IgnoreBitLockerCheck given: proceeding despite BitLocker state '$bitlockerState'." 'WARN' }
 
 # --- Assess: what does the boot situation look like? ---------------------
 Say "--- Assessment ---"

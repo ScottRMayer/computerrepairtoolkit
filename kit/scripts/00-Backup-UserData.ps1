@@ -162,6 +162,7 @@ function Get-ProfileKnownFolders {
     foreach ($name in $knownFolders.Keys) {
         $candidates = New-Object System.Collections.Generic.List[string]
 
+        # Registry (User Shell Folders) is authoritative when the hive is loaded.
         if ($regKey) {
             try {
                 # Read RAW so %USERPROFILE% can be expanded for THAT profile, not
@@ -174,7 +175,10 @@ function Get-ProfileKnownFolders {
                 }
             } catch { }
         }
-        $candidates.Add((Join-Path $Profile.FullName $name))
+        # The profile-local folder is listed FIRST so that it keeps the plain
+        # name in the backup and a OneDrive location lands as
+        # "<Folder> (OneDrive)" — the layout the checklist describes.
+        $candidates.Insert(0, (Join-Path $Profile.FullName $name))
         foreach ($od in $oneDriveRoots) { $candidates.Add((Join-Path $od.FullName $name)) }
 
         foreach ($c in $candidates) {
@@ -353,9 +357,17 @@ foreach ($profile in $profiles) {
 }
 
 # --- Reconcile and record ---
-$verified = ($overallExitCode -eq 0) -and ($requiredBytes -eq 0 -or $copiedBytes -gt 0)
+# A backup is verified only when bytes actually landed. An EMPTY source is
+# not a backup either: it almost always means the wrong profile was chosen
+# (or a signed-out user's OneDrive folders could not be resolved), and the
+# launcher must not tell the agent a file-level safety net exists.
+$verified = ($overallExitCode -eq 0) -and ($copiedBytes -gt 0)
 if ($overallExitCode -eq 0 -and -not $verified) {
-    Write-KitLog -LogPath $LogPath -Level ERROR -Message ("Nothing verifiably landed on the destination although {0:N2} GB was measured at the source. Do NOT treat this as a backup." -f ($requiredBytes / 1GB))
+    if ($requiredBytes -eq 0) {
+        Write-KitLog -LogPath $LogPath -Level ERROR -Message "Nothing to back up: the selected profile(s) have no local files in any known folder. Check -UserName (is this the right person?) — this is NOT being recorded as a backup."
+    } else {
+        Write-KitLog -LogPath $LogPath -Level ERROR -Message ("Nothing verifiably landed on the destination although {0:N2} GB was measured at the source. Do NOT treat this as a backup." -f ($requiredBytes / 1GB))
+    }
     $overallExitCode = 1
 }
 

@@ -33,9 +33,16 @@ $MUST_DENY = @(
     @('PowerShell', 'Set-MpPreference -DisableRealtimeMonitoring $true'),
     @('PowerShell', 'Add-MpPreference -ExclusionPath C:\Users\Public'),
     @('PowerShell', 'Set-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Name DisableAntiSpyware -Value 1'),
+    @('PowerShell', 'New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" -Name DisableRealtimeMonitoring -Value $true -PropertyType DWord'),
     @('Bash', 'reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f'),
     @('Bash', 'sc stop WinDefend'),
+    @('PowerShell', 'Stop-Service -Name WinDefend -Force'),
+    @('PowerShell', 'Set-Service WinDefend -StartupType Disabled'),
+    @('Bash', 'net stop mpssvc'),
     @('PowerShell', 'Set-MpPreference -DisableTamperProtection $true'),
+    @('PowerShell', 'New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name Shell -Value evil.exe'),   # no trailing backslash after Winlogon
+    @('PowerShell', 'Set-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control\Lsa -Name RunAsPPL -Value 0'),
+    @('PowerShell', 'Set-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name kit -Value x.exe'),
     @('Bash', 'reg add "HKLM\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\sethc.exe" /v Debugger /d cmd.exe /f'),
     @('PowerShell', 'New-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name evil -Value x.exe'),
     @('PowerShell', 'bcdedit /delete {current}'),
@@ -55,8 +62,14 @@ $MUST_ALLOW = @(
     @('PowerShell', 'Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, IsTamperProtected, AntivirusSignatureLastUpdated'),
     @('PowerShell', 'Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" | Select-Object DisableAntiSpyware'),
     @('PowerShell', 'Remove-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Name DisableAntiSpyware'),   # REMOVING a malware-set policy is a repair
+    @('PowerShell', 'Set-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Name DisableAntiSpyware -Value 0'),  # so is setting it back to 0
+    @('Bash', 'reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableAntiSpyware /t REG_DWORD /d 0 /f'),
     @('Bash', 'sc query WinDefend'),
+    @('PowerShell', 'Set-Service -Name WinDefend -StartupType Automatic; Start-Service WinDefend'),   # re-enabling what malware disabled
+    @('PowerShell', 'Stop-Service wuauserv -Force  # this makes sense because the WU cache is corrupt'),
+    @('Bash', 'net stop wuauserv && net stop bits'),
     @('PowerShell', 'Update-MpSignature; Start-MpScan -ScanType QuickScan'),
+    @('PowerShell', 'Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" | Select-Object Shell, Userinit'),   # READING Winlogon is fine
     @('PowerShell', 'Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"'),  # READING Run is fine
     @('PowerShell', 'Remove-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name Adware'),  # disabling a startup entry is a repair
     @('PowerShell', 'bcdedit /set {current} safeboot network'),                # entering Safe Mode

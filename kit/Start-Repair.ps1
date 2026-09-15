@@ -113,7 +113,7 @@ Write-KitLog -LogPath $LogPath -Message "PC Repair Kit starting from $KitRoot"
 if ($BackupDestination) { $BackupMode = 'Auto' }
 
 # --- Sanity check: are we running from a real assembled kit? ---
-$requiredPaths = @('CLAUDE.md', 'scripts\00-Backup-UserData.ps1', 'bin\claude\claude.exe', 'hooks\PreToolUse-Guard.ps1', '.claude\settings.json')
+$requiredPaths = @('CLAUDE.md', 'scripts\00-Backup-UserData.ps1', 'bin\claude\claude.exe', 'hooks\PreToolUse-Guard.ps1', '.claude\settings.json', 'config\system-prompt-append.txt')
 $missing = $requiredPaths | Where-Object { -not (Test-Path (Join-Path $KitRoot $_)) }
 if ($missing) {
     Write-KitLog -LogPath $LogPath -Level ERROR -Message "Missing expected kit files: $($missing -join ', '). Has scripts\Build-Kit.ps1 been run? Aborting."
@@ -145,15 +145,34 @@ if (-not $isElevated) {
 # files matter. The interactively signed-in user (Win32_ComputerSystem
 # .UserName) is the better default; -BackupUserName still overrides.
 if (-not $BackupUserName) {
+    # The backup script wants the PROFILE FOLDER name. For a Microsoft-account
+    # or Entra sign-in Win32_ComputerSystem.UserName is 'MicrosoftAccount\name@outlook.com'
+    # / 'AzureAD\Name', while the folder is a truncated local part — so resolve
+    # through the SID to Win32_UserProfile.LocalPath instead of splitting the name.
     $consoleUser = $null
     try { $consoleUser = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).UserName } catch { }
+    $resolved = $null
     if ($consoleUser) {
-        $BackupUserName = ($consoleUser -split '\\')[-1]
+        try {
+            $sid = (New-Object System.Security.Principal.NTAccount($consoleUser)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+            $profilePath = (Get-CimInstance -ClassName Win32_UserProfile -Filter "SID='$sid'" -ErrorAction Stop | Select-Object -First 1).LocalPath
+            if ($profilePath -and (Test-Path $profilePath)) { $resolved = Split-Path -Leaf $profilePath }
+        } catch { }
+        if (-not $resolved) {
+            $leaf = ($consoleUser -split '\\')[-1]
+            if (Test-Path (Join-Path (Join-Path $env:SystemDrive 'Users') $leaf)) { $resolved = $leaf }
+        }
+    }
+    if ($resolved) {
+        $BackupUserName = $resolved
         if ($BackupUserName -ne $env:USERNAME) {
-            Write-KitLog -LogPath $LogPath -Message "Signed-in console user is '$BackupUserName' (this elevated session runs as '$env:USERNAME'); defaulting the backup to '$BackupUserName'. Pass -BackupUserName to override."
+            Write-KitLog -LogPath $LogPath -Message "Signed-in console user is '$consoleUser' (profile folder '$BackupUserName'; this elevated session runs as '$env:USERNAME'); defaulting the backup to '$BackupUserName'. Pass -BackupUserName to override."
         }
     } else {
         $BackupUserName = $env:USERNAME
+        if ($consoleUser) {
+            Write-KitLog -LogPath $LogPath -Level WARN -Message "Could not map the signed-in user '$consoleUser' to a profile folder; defaulting the backup to '$env:USERNAME'. Pass -BackupUserName <folder name under C:\Users> if that is the wrong person."
+        }
     }
 }
 
@@ -462,7 +481,7 @@ function Start-MonitoredAgent {
                 if ($parts.Count -gt 1) {
                     foreach ($line in $parts[0..($parts.Count - 2)]) {
                         if ($line -match '"type"\s*:\s*"tool_use"') { $toolCalls++ }
-                        if ($line -match 'PreToolUse guard') { $denials++ }
+                        if (Test-TranscriptGuardDenial -Line $line) { $denials++ }
                         foreach ($msg in (Format-TranscriptEvent -Line $line)) {
                             Write-Host $msg
                             $lastOutput = Get-Date
@@ -484,7 +503,7 @@ function Start-MonitoredAgent {
             $tail = $reader.ReadToEnd()
             foreach ($line in (($buffer + $tail) -split "`n")) {
                 if ($line -match '"type"\s*:\s*"tool_use"') { $toolCalls++ }
-                if ($line -match 'PreToolUse guard') { $denials++ }
+                if (Test-TranscriptGuardDenial -Line $line) { $denials++ }
                 foreach ($msg in (Format-TranscriptEvent -Line $line)) { Write-Host $msg }
             }
         } catch { }
@@ -533,20 +552,28 @@ function Get-TranscriptResultSubtype {
 function Invoke-AgentPreflight {
     <#
         One cheap Haiku call from a scratch project directory that carries a
-        copy of the kit's .claude\settings.json and hooks\, and no CLAUDE.md
-        (so the model has no reason to refuse). It is asked to run a harmless
-        Invoke-WebRequest to 127.0.0.1:9, which the PreToolUse guard must deny.
-        Outcomes:
-          auth_ok  - a result event came back, so TCP+TLS+token+subscription work
-          hook     - 'verified' (the guard's deny reason is in the transcript),
-                     'inert' (the command demonstrably executed — the guard
-                     did NOT block it), or 'inconclusive' (the model never
-                     attempted the command, or the outcome could not be read)
+        copy of the kit's .claude\settings.json and hooks\ and NO CLAUDE.md.
+        The scratch directory lives under %TEMP%, deliberately OUTSIDE the kit
+        tree: Claude Code loads CLAUDE.md from the working directory and every
+        directory above it, so a scratch folder under the kit root would still
+        load the kit playbook, whose "never download anything" rule would make
+        the model refuse the canary instead of letting the guard decide.
+
+        The model is asked to run a harmless Invoke-WebRequest to
+        127.0.0.1:9, which the PreToolUse guard must deny. Outcomes:
+          auth_ok  - a result event came back, so TCP+TLS+token+subscription
+                     work (whatever the model then did with its turns)
+          hook     - 'verified' (a tool RESULT carries the guard's denial),
+                     'inert' (a tool RESULT shows the command executed — the
+                     guard did NOT block it), or 'inconclusive' (the model
+                     never attempted the command, or the outcome could not
+                     be read). Only tool results count: assistant prose
+                     mentioning the guard is not evidence.
         A run costs a few seconds and a fraction of a cent, and replaces a
         confusing turn-0 failure with a plain answer. The canary URL is a
         closed local port, so even an inert guard changes nothing.
     #>
-    $canaryDir = Join-Path $stateDir 'canary'
+    $canaryDir = Join-Path $env:TEMP "repairkit-canary-$PID"
     Remove-Item $canaryDir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Path (Join-Path $canaryDir '.claude') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $canaryDir 'hooks') -Force | Out-Null
@@ -554,10 +581,10 @@ function Invoke-AgentPreflight {
     Copy-Item (Join-Path $KitRoot 'hooks\PreToolUse-Guard.ps1') (Join-Path $canaryDir 'hooks\PreToolUse-Guard.ps1') -Force
 
     $canaryCmd = 'Invoke-WebRequest -Uri http://127.0.0.1:9/repair-kit-hook-canary -UseBasicParsing -TimeoutSec 3'
-    $prompt = "Automated self-test. Using your shell tool, run exactly this one command and then reply with a single line quoting the tool's output or error verbatim. Do not explain, do not ask, and do not run anything else: $canaryCmd"
+    $prompt = "Automated self-test of a command guard; this directory is an empty scratch area. Using your shell tool, run exactly this one command once, then reply with a single line quoting the tool's output or error verbatim. If the tool reports the command was blocked, that IS the expected result: report it and stop. Do not explain, do not retry, do not try alternatives, and do not run anything else: $canaryCmd"
     $outPath = Join-Path $KitRoot "logs\preflight-$(Get-Date -Format 'yyyyMMdd-HHmmss').jsonl"
 
-    $result = [ordered]@{ ran = $true; auth_ok = $false; hook = 'inconclusive'; detail = ''; transcript = $outPath; exit_code = $null }
+    $result = [ordered]@{ ran = $true; auth_ok = $false; hook = 'inconclusive'; detail = ''; transcript = $outPath; exit_code = $null; result_subtype = $null }
     Push-Location $canaryDir
     try {
         $run = Start-MonitoredAgent -Quiet -TimeoutSeconds $PreflightSeconds -OutPath $outPath -Arguments @(
@@ -568,7 +595,10 @@ function Invoke-AgentPreflight {
             '--output-format', 'stream-json',
             '--verbose'
         )
-    } finally { Pop-Location }
+    } finally {
+        Pop-Location
+        Remove-Item $canaryDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 
     if ($run.TimedOut) {
         Stop-ProcessTree -ProcessId $run.Process.Id
@@ -577,28 +607,42 @@ function Invoke-AgentPreflight {
     }
     $result.exit_code = $run.ExitCode
 
-    $text = ''
-    try { $text = Get-Content $outPath -Raw -Encoding UTF8 -ErrorAction Stop } catch { }
+    $lines = @()
+    try { $lines = @(Get-Content $outPath -Encoding UTF8 -ErrorAction Stop) } catch { }
     $err = ''
     try { $err = Get-Content "$outPath.err" -Raw -Encoding UTF8 -ErrorAction Stop } catch { }
-    $all = "$text`n$err"
 
-    $gotResult = ($text -match '"type"\s*:\s*"result"')
-    $result.auth_ok = ($run.ExitCode -eq 0 -and $gotResult)
+    # Any "result" event proves the whole path (TCP, TLS, token, subscription):
+    # the API answered. What the model did with its turns afterwards — even
+    # running out of them retrying the blocked canary (exit != 0,
+    # subtype error_max_turns) — says nothing about the credential.
+    $subtype = Get-TranscriptResultSubtype -Path $outPath
+    $result.result_subtype = $subtype
+    $result.auth_ok = [bool]$subtype
     if (-not $result.auth_ok) {
-        if ($all -match '(?i)(401|403|unauthori[sz]ed|invalid api key|authentication|oauth|not logged in|token.*(expired|invalid|revoked)|please run /login)') {
-            $result.detail = 'auth: ' + (Limit-Text (($err + ' ' + $text) -replace '\s+', ' ').Trim() 300)
-        } elseif ($all -match '(?i)(ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|fetch failed|network|certificate)') {
-            $result.detail = 'network: ' + (Limit-Text (($err + ' ' + $text) -replace '\s+', ' ').Trim() 300)
+        # Classify from stderr and the CLI's own error text only, with the
+        # status codes anchored — a message id or a token count contains
+        # "403" often enough to have misfired here before.
+        $errFlat = (($err -replace '\s+', ' ').Trim())
+        if ($errFlat -match '(?i)(\b(401|403)\b|unauthori[sz]ed|invalid api key|authentication|oauth|not logged in|token.*(expired|invalid|revoked)|please run /login)') {
+            $result.detail = 'auth: ' + (Limit-Text $errFlat 300)
+        } elseif ($errFlat -match '(?i)(ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|fetch failed|getaddrinfo|certificate)') {
+            $result.detail = 'network: ' + (Limit-Text $errFlat 300)
         } else {
-            $result.detail = 'unknown: exit ' + $run.ExitCode + ' ' + (Limit-Text (($err + ' ' + $text) -replace '\s+', ' ').Trim() 300)
+            $result.detail = 'unknown: exit ' + $run.ExitCode + ' ' + (Limit-Text $errFlat 300)
         }
         return $result
     }
 
-    $attempted = ($text -match 'repair-kit-hook-canary' -and $text -match '"type"\s*:\s*"tool_use"')
-    $denied    = ($all -match 'Agent-initiated network downloads are blocked' -or $all -match 'PreToolUse guard')
-    $executed  = ($all -match '(?i)(unable to connect|actively refused|connection refused|ECONNREFUSED|No connection could be made|Failed to connect|remote server returned)')
+    # Hook verdict from tool RESULTS only.
+    $attempted = $false; $denied = $false; $executed = $false
+    foreach ($line in $lines) {
+        if ($line -match '"type"\s*:\s*"tool_use"' -and $line -match 'repair-kit-hook-canary') { $attempted = $true }
+        foreach ($r in (Get-TranscriptToolResults -Line $line)) {
+            if ($r.Text -match '\[PreToolUse guard\]') { $denied = $true }
+            elseif ($r.Text -match '(?i)(unable to connect|actively refused|connection refused|ECONNREFUSED|No connection could be made|Failed to connect|remote server returned|StatusCode|127\.0\.0\.1:9)') { $executed = $true }
+        }
+    }
 
     if ($denied) {
         $result.hook = 'verified'
@@ -607,9 +651,9 @@ function Invoke-AgentPreflight {
         $result.hook = 'inert'
         $result.detail = 'the canary command executed — the PreToolUse guard did not block it'
     } elseif ($attempted) {
-        $result.detail = 'the model attempted the canary but neither a denial nor an execution could be read from the transcript'
+        $result.detail = 'the model attempted the canary but neither a denial nor an execution could be read from a tool result'
     } else {
-        $result.detail = 'the model never attempted the canary command'
+        $result.detail = "the model never attempted the canary command (result: $subtype)"
     }
     return $result
 }

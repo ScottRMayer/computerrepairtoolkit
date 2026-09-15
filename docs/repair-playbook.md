@@ -24,7 +24,7 @@ condensed version and points here; exact commands live in
    folders, quarantine, disabled items) *is* the rollback path.
 3. **Never reboot mid-session** — a reboot ends the cloud session. Queue
    reboot-requiring fixes, apply them last where they don't sever the run, and
-   report "reboot required". Use `RunOnce`, never `schtasks`, for post-reboot.
+   report "reboot required". Nothing may be scheduled to run after a reboot (the guard hook denies `Run`/`RunOnce` writes and `schtasks` fails in Safe Mode) — a needed post-reboot step goes under `needs_a_person`.
 4. **Connectivity-affecting network fixes go last** and never the ones that cut
    the agent's own uplink (winsock/IP-stack resets are reboot-queued).
 5. **Hardware tripwire — STOP and name the hardware, don't keep repairing in

@@ -32,16 +32,14 @@ echo   Asking for administrator permission...
 echo   Click YES on the prompt that appears.
 echo.
 REM Re-launch elevated. Any arguments given to this .cmd (e.g.
-REM -RepairMode Check, -BackupMode Skip) are carried across the
-REM elevation boundary; without this they were silently dropped.
+REM -RepairMode Check, -PlaybookPrompt "Wi-Fi drops") are carried across the
+REM elevation boundary; without this they were silently dropped. They travel
+REM in an environment variable rather than spliced into the PowerShell
+REM command line, so quotes and parentheses inside them survive.
 REM -KitElevated is the loop guard (Start-Repair.ps1 accepts and ignores it).
-if "%~1"=="" (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "Start-Process -FilePath '%~f0' -ArgumentList '-KitElevated' -Verb RunAs"
-) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "Start-Process -FilePath '%~f0' -ArgumentList '-KitElevated %*' -Verb RunAs"
-)
+set "KIT_RELAUNCH_ARGS=%*"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "Start-Process -FilePath '%~f0' -ArgumentList ('-KitElevated ' + $env:KIT_RELAUNCH_ARGS) -Verb RunAs"
 exit /b
 
 :run
@@ -64,6 +62,12 @@ if %EXITCODE%==0 (
     echo     FINISHED
     echo   ==========================================
     echo   A full record was saved to the logs folder on this drive.
+) else if %EXITCODE%==2 (
+    echo   ==========================================
+    echo     STOPPED AT THE TIME LIMIT - PARTLY DONE
+    echo   ==========================================
+    echo   The assistant ran out of time and was asked to wrap up. Read the
+    echo   report card carefully: some work may be unfinished.
 ) else if %EXITCODE%==3 (
     echo   ==========================================
     echo     COULD NOT START - NO INTERNET
